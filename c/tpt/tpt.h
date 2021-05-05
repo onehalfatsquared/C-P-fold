@@ -1,5 +1,8 @@
 #pragma once
 #include <vector>
+#include <eigen3/Eigen/Dense>
+#include <eigen3/Eigen/SparseLU>
+//#include <eigen3/Eigen/QR>
 namespace bd { 
 class Database; 
 
@@ -42,6 +45,8 @@ void computeFreeEnergy(int num_states, double* Z, double* F);
 //compute hitting probabilities for end states in reversible case
 void computeHittingProbability(double* P, int num_states, std::vector<int> endStates, 
 															 double* U);
+void computeHittingProbability(Eigen::MatrixXd& P, int num_states, std::vector<int> endStates, 
+															 Eigen::MatrixXd& U);
 //compute the mfpt from worm to target states
 void computeMFPTs(int num_states, double* T, std::vector<int> targets, double* m);
 void computeMFPTsSP(int num_states, double* T, std::vector<int> targets, double* m);

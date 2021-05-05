@@ -88,6 +88,12 @@ int main(int argc, char* argv[]) {
 	//time dependent stuff
 	//phaseTrajectory(N, db, initial, target, useFile, opt_file);
 
+	//measure testing
+	//bd::testMeasures(N, db, initial, target, useFile);
+	//bd::testMeasuresRecord(N, db, initial, target, useFile);
+	//bd::testMeasuresScatter(N, db, initial, target, useFile);
+
+
 
 
 

@@ -36,7 +36,7 @@ double morseEval(double* particles, int rho, double* E, int N, int* P) {
 
 void morseGrad(double* particles, int rho, double* E, int N, int* P, double* g) {
   //compute gradient of energy of system with pairwise morse potential
-	int i, j; int rep = 5.0;
+	int i, j; int rep = 250.0;
 	double* S = new double[DIMENSION];
 	for(i=0;i<N;i++){
     S[0] = S[1] = 0;
@@ -62,6 +62,7 @@ void morseGrad(double* particles, int rho, double* E, int N, int* P, double* g) 
           }
         }
         else if(r<1.1){
+          //printf("repelling\n");
           for(int k=0; k<DIMENSION;k++)
             S[k] = S[k] - rep * Z[k] / (r*r);
         }

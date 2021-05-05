@@ -163,6 +163,10 @@ void getNEQparameters(std::string& p_file, Eigen::VectorXd& beta, Eigen::MatrixX
 void phaseTrajectory(int N, Database* db, int initial, int target, bool, std::string& p_file);
 
 
+//test measures for sampling 
+void testMeasures(int N, Database* db, int initial, int target, bool useFile);
+void testMeasuresRecord(int N, Database* db, int initial, int target, bool useFile);
+void testMeasuresScatter(int N, Database* db, int initial, int target, bool useFile);
 
 
 

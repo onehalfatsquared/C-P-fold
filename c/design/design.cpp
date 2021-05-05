@@ -7,7 +7,10 @@
 #include <vector>
 #include <map>
 #include <deque>
+#include <eigen3/unsupported/Eigen/MatrixFunctions>
 #include <eigen3/Eigen/Dense>
+#include <cstdlib>   // rand and srand
+#include <ctime>     // For the time function
 #include "point.h"
 #include "pair.h"
 #include "adjacency.h"
@@ -32,7 +35,7 @@ void getBondTypes(int N, int* particleTypes, Database* db, std::vector<int> targ
 		for (int i = 0; i < N; i++) {
 			for (int j = i+2; j < N; j++) {
 				if ( (*db)[state].isInteracting(i,j,N)) {
-			    printf("%d %d ", i,j);
+			    //printf("%d %d ", i,j);
 					int p1 = particleTypes[i];
 					int p2 = particleTypes[j];
 					if (p1 == 0 && p2 == 0) {
@@ -47,8 +50,13 @@ void getBondTypes(int N, int* particleTypes, Database* db, std::vector<int> targ
 				}
 			}
 		}
-		printf("\n");
-		//printf("\n State: %d, AA: %d, AB %d, BB %d\n", state, AA, AB, BB);
+		//printf("\n");
+		printf("\n State: %d, AA: %d, AB %d, BB %d\n", state, AA, AB, BB);
+		double* X = new double[N*DIMENSION];
+		Cluster c = (*db)[state].getRandomIC();
+		c.makeArray3d(X,N);
+		printCluster(X,N);
+		delete []X;
 	}
 }
 
@@ -750,6 +758,9 @@ void constructScatterTOY1(int N, Database* db, int initial, int target) {
 	}
 	double base = 0.05; //smallest kappa to use - 0.05
 	double mult = 1.6; //multiplies base to get next value - 1.3
+
+	base = 14; mult = 1.1; M = 100;
+
 	double* Ks = new double[M]; Ks[0] = base;
 	for (int i = 1; i < M; i++) {
 		Ks[i] = Ks[i-1] * mult;
@@ -822,6 +833,12 @@ void perturbDB(Database* db, double freq_perturb_frac, double rate_perturb_frac)
 	int num_states = db->getNumStates();
 	double Z = 0; //new normalizer
 
+	// Get the system time.
+	unsigned seed = time(0);
+	 
+	// Seed the random number generator.
+	srand(seed);
+
 	for (int i = 0; i < num_states; i++) {
 		//get the original values
 		double original_rate = (*db)[i].mfpt;
@@ -843,6 +860,9 @@ void perturbDB(Database* db, double freq_perturb_frac, double rate_perturb_frac)
 		printf("Old freq: %f, new freq %f, diff %f %% \n", original_eq, new_eq, eq_diff);
 		if (new_rate > 0) {
 			(*db)[i].mfpt = new_rate;
+		}
+		else {
+			(*db)[i].mfpt = 0.01;
 		}
 		if (new_eq > 0) {
 			(*db)[i].freq = new_eq;
@@ -3441,6 +3461,675 @@ void getNEQparameters(std::string& p_file, Eigen::VectorXd& beta, Eigen::MatrixX
 
 }
 
+
+
+/***********************************************************************/
+/********* Test possible sampling measures on the MC model ***************/
+/***********************************************************************/
+
+
+
+
+
+
+void createRateMatrix(int N, Database* db, int numTypes, double* kappaVals,
+											int* particleTypes, 
+											Eigen::MatrixXd& R, const Eigen::MatrixXd& r_form) {
+	//use the database to construct the rate matrix at the given values
+	//no derivative, so this is just a matrix
+
+	//declare equilibrium measure and perform reweight
+	int num_states = db->getNumStates();
+	double* eq = new double[num_states];           //equilibrium measure
+	std::map<std::pair<int,int>,double> kappa;    //map for interaction type to kappa
+	makeKappaMap(numTypes, kappaVals, kappa);
+	reweight(N, num_states, db, particleTypes, eq, kappa);
+
+	//fill in forward and satisfy detailed balance wrt eq for backward
+	for (int i = 0; i < num_states; i++) {
+		for (int j = 0; j < num_states; j++) {
+			if (r_form(i,j) > 0) {
+				R(i,j) = r_form(i,j);
+				R(j,i) = r_form(i,j) * (eq[i] / eq[j]);
+			}
+		}
+	}
+
+	//finally, must set the diagonal to be negative of the row sum
+	for (int i = 0; i < num_states; i++) {
+		double R_sum = 0; 
+
+		for (int j = 0; j < num_states; j++) {
+			R_sum += R(i,j);
+		}
+
+		R(i,i) = -R_sum; 
+	}
+
+
+	delete []eq;
+}
+
+
+
+double smallestBarrier(int N, Database* db, int target, double* E) {
+	//determine the weakest bond in the target state under the given configuration
+
+	double minE = 40;
+	for (int i = 0; i < N; i++) {
+		for (int j = i+2; j < N; j++) {
+			if ( (*db)[target].isInteracting(i,j,N)) {
+		    double energy = E[toIndex(i,j,N)];
+		    if (energy < minE) {
+		    	minE = energy;
+		    	//printf("minE is %f\n", minE);
+		    }
+			}
+		}
+	}
+
+	return minE;
+}
+
+double harmonicMeanBarrier(int N, Database* db, int target, double* E) {
+	//determine harmonic mean of the bond strengths in target state
+
+	double m = 0;
+
+	for (int i = 0; i < N; i++) {
+		for (int j = i+2; j < N; j++) {
+			if ( (*db)[target].isInteracting(i,j,N)) {
+		    double energy = E[toIndex(i,j,N)];
+		    m += 1.0 / energy;
+			}
+		}
+	}
+
+	return 1.0 / m;
+}
+
+void buildAM(int N, Database* db, int state, int* M) {
+	//construct adjacency matrix from db
+
+	for (int i = 0; i < N; i++) {
+		for (int j = 0; j < N; j++) {
+			M[bd::toIndex(i,j,N)] = (*db)[state].isInteracting(i,j,N);
+		}
+	}
+}
+
+void misfoldVector(int N, Database* db, int target, Eigen::VectorXd& misfold, double* E) {
+	//construct the vector of misfolded energies
+
+	//get number of states
+	int num_states = db->getNumStates();
+
+	//make adjacency matrix of target state and comp state
+	int* M_target = new int[N*N]; for (int i = 0; i < N*N; i++) M_target[i] = 0;
+	int* M = new int[N*N]; for (int i = 0; i < N*N; i++) M[i] = 0;
+	buildAM(N, db, target, M_target);
+
+	//loop over states
+	for (int i = 0; i < num_states; i++) {
+		double badEnergy = 0;
+		buildAM(N, db, i, M);
+		for (int p1 = 0; p1 < N; p1++) {
+			for (int p2 = p1+2; p2 < N; p2++) {
+				int inState = M[bd::toIndex(p1,p2,N)];
+				int inTarget = M_target[bd::toIndex(p1,p2,N)];
+				if (inState == 1 && inTarget == 0) {
+					badEnergy += E[toIndex(p1,p2,N)];
+				}
+			}
+		}
+		misfold(i) = badEnergy;
+	}
+
+	delete []M; delete []M_target;
+
+}
+
+double averageMisfoldEnergy(int N, double T, int initial, double* kappaVals, Database* db, 
+														int* particleTypes, int numTypes, double* Tconst,
+														const Eigen::VectorXd& misfold, std::vector<int>& targets) {
+	//get average misfolded energy from time 0 to T
+
+	int num_states = db->getNumStates();
+
+	//first we need to construct the generator
+	Eigen::MatrixXd R; R.setZero(num_states, num_states);
+	Eigen::MatrixXd r_form; r_form.setZero(num_states, num_states);
+	for (int i = 0; i < num_states*num_states; i++) {
+		r_form(i) = Tconst[i];
+	}
+	createRateMatrix(N, db, numTypes, kappaVals, particleTypes,  R, r_form);
+
+	//now we need a matrix exponential of R
+	Eigen::MatrixXd L; L.setZero(num_states,num_states);
+	R = R*T; 
+	L = R.exp() - Eigen::MatrixXd::Identity(num_states,num_states);
+	R = R / T;
+	Eigen::RowVectorXd r; r.setZero(num_states);
+	r = L.row(initial);
+
+	//need to compute r*R^-1. fR = r. 
+	Eigen::RowVectorXd f; f.setZero(num_states);
+	f = r * R.completeOrthogonalDecomposition().pseudoInverse();
+	f = (f+f.cwiseAbs())/2.0;
+	//std::cout << f << "\n";
+	//std::cout << (f*R - r).norm() << "\n";
+
+	//abort();
+
+
+	//take the row corresponding to initial of product LF, divide by T
+	//double prod = f.sum();
+	double prod = f.dot(misfold);
+
+	return 1.0 / T * prod;
+
+}
+
+double averageMisfoldEnergyEnd(int N, double T, int initial, double* kappaVals, Database* db, 
+														int* particleTypes, int numTypes, double* Tconst,
+														const Eigen::VectorXd& misfold, std::vector<int>& targets) {
+	//get average misfolded energy from time 0 to T
+
+	int num_states = db->getNumStates();
+
+	//first we need to construct the generator
+	Eigen::MatrixXd R; R.setZero(num_states, num_states);
+	Eigen::MatrixXd r_form; r_form.setZero(num_states, num_states);
+	for (int i = 0; i < num_states*num_states; i++) {
+		r_form(i) = Tconst[i];
+	}
+	createRateMatrix(N, db, numTypes, kappaVals, particleTypes,  R, r_form);
+
+	//now we need a matrix exponential of R
+	Eigen::MatrixXd L; L.setZero(num_states,num_states);
+	R = R*T; 
+	L = R.exp();
+	Eigen::RowVectorXd r; r.setZero(num_states);
+	r = L.row(initial);
+
+	/*
+	for (int i = 0; i < num_states; i++) {
+		printf("State %d, prob %f, leave rate %f\n", i, r(i), R(i,i));
+	}
+	*/
+
+	double prod = r.dot(misfold);
+
+	return prod;
+
+}
+
+double averageMisfoldEnergyTrap(int N, double T, int initial, double* kappaVals, Database* db, 
+														int* particleTypes, int numTypes, double* Tconst,
+														const Eigen::VectorXd& misfold, std::vector<int>& targets) {
+	//get average misfolded energy at first trap time
+
+	int num_states = db->getNumStates();
+
+	//first we need to construct the generator
+	Eigen::MatrixXd R; R.setZero(num_states, num_states);
+	Eigen::MatrixXd r_form; r_form.setZero(num_states, num_states);
+	for (int i = 0; i < num_states*num_states; i++) {
+		r_form(i) = Tconst[i];
+	}
+	createRateMatrix(N, db, numTypes, kappaVals, particleTypes,  R, r_form);
+
+	//next we determine the "trap states" via a threshold on diagonal entries
+	double threshold = 2; double min_rate = 1e6;
+	//get minimum rate
+	for (int i = 2; i < num_states; i++) {
+		if (fabs(R(i,i)) < min_rate) {
+			min_rate = fabs(R(i,i));
+		}
+	}
+	//determine all  states within threshold
+	std::vector<int> traps;
+	for (int i = 2; i < num_states; i++) {
+		if (fabs(R(i,i)) < threshold*min_rate) {
+			traps.push_back(i);
+			printf("State %d, rate %f\n", i, R(i,i));
+		}
+	}
+
+	//determine the first hitting probability for the trap states
+	Eigen::MatrixXd U; U.setZero(num_states,num_states);
+	Eigen::MatrixXd P; P.setZero(num_states,num_states);
+	//make rate matrix into probability matrix
+	for (int i = 0; i < num_states; i++) {
+		double Z = -R(i,i);
+		for (int j = 0; j < num_states; j++) {
+			P(i,j) = R(i,j) / Z;
+		}
+		P(i,i) = 0.0;
+	}
+	computeHittingProbability(P, num_states, traps, U);
+	Eigen::VectorXd probs = U.row(initial); 
+	
+	double prod = probs.dot(misfold);
+
+	return prod;
+
+}
+
+double finalTargetProb(int N, double T, int initial, double* kappaVals, Database* db, 
+														int* particleTypes, int numTypes, double* Tconst,
+														std::vector<int>& targets) {
+	//return probability of target states at final time
+
+	int num_states = db->getNumStates();
+
+	//first we need to construct the generator
+	Eigen::MatrixXd R; R.setZero(num_states, num_states);
+	Eigen::MatrixXd r_form; r_form.setZero(num_states, num_states);
+	for (int i = 0; i < num_states*num_states; i++) {
+		r_form(i) = Tconst[i];
+	}
+	createRateMatrix(N, db, numTypes, kappaVals, particleTypes,  R, r_form);
+
+	//now we need a matrix exponential of R
+	Eigen::MatrixXd L; L.setZero(num_states,num_states);
+	R = R*T; 
+	L = R.exp();
+	Eigen::RowVectorXd r; r.setZero(num_states);
+	r = L.row(initial);
+
+	double prob = r(targets[0]);
+
+	return prob;
+
+}
+
+double stayingProb(int N, double T, int initial, double* kappaVals, Database* db, 
+														int* particleTypes, int numTypes, double* Tconst,
+														std::vector<int>& targets) {
+	//return probability of target states at final time when initialized there
+
+	int num_states = db->getNumStates();
+
+	//first we need to construct the generator
+	Eigen::MatrixXd R; R.setZero(num_states, num_states);
+	Eigen::MatrixXd r_form; r_form.setZero(num_states, num_states);
+	for (int i = 0; i < num_states*num_states; i++) {
+		r_form(i) = Tconst[i];
+	}
+	createRateMatrix(N, db, numTypes, kappaVals, particleTypes,  R, r_form);
+
+	//now we need a matrix exponential of R
+	Eigen::MatrixXd L; L.setZero(num_states,num_states);
+	R = R*T; 
+	L = R.exp();
+	Eigen::RowVectorXd r; r.setZero(num_states);
+	r = L.row(targets[0]);
+
+	double prob = r(targets[0]);
+
+	return prob;
+
+}
+
+
+void testMeasures(int N, Database* db, int initial, int target, bool useFile) {
+	//test measures - output eq prob and mfpt, along with test meaasures
+
+	//get database info
+	int num_states = db->getNumStates(); 
+
+	//set up particle identity
+	int* particleTypes = new int[N];
+	int numTypes;
+	if (useFile) { //use the fle to set identities
+		numTypes = readDesignFile(N, particleTypes);
+	}
+	else { //uses the function to set identities
+		int IC = 1; 
+		numTypes = setTypes(N, particleTypes, IC);
+	}
+	int numInteractions = numTypes*(numTypes+1)/2;
+
+	//set up sticky parameter values
+	double* kappaVals = new double[numInteractions];
+	readKappaFile(numInteractions, kappaVals);
+
+	//declare rate matrix
+	double* Tconst = new double[num_states*num_states]; //rate matrix - only forward entries
+
+	//init the rate matrix with zeros
+	for (int i = 0; i < num_states*num_states; i++) {
+		Tconst[i] = 0;
+	}
+
+	//get bonds->bonds+1 entries from mfpt estimates
+	std::vector<int> ground; //vector to hold all ground states
+	createTransitionMatrix(Tconst, num_states, db, ground);
+	std::cout << "All ground states:\n";
+	for (int i = 0; i < ground.size(); i++) {
+		std::cout << ground[i] << "\n";
+	}
+	std::cout << "\n";
+
+	//find all target states consistent with input target
+	std::vector<int> targets; targets.push_back(target);
+
+	//set interaction matrices
+	int* P = new int[N*N]; 
+	double* E = new double[N*N]; 
+
+	std::map<std::pair<int,int>,double> kappaMap;
+	makeKappaMap(numTypes, kappaVals, kappaMap);
+	fillP(N, particleTypes, P, E, kappaMap);
+
+
+	Eigen::VectorXd misfold;
+	double T = 500.0;
+
+
+
+	//setup kappa values
+	for (int i = 0; i < N*N; i++) P[0] = 0; for (int i = 0; i < N*N; i++) E[0] = 0;
+	kappaMap.clear();
+	makeKappaMap(numTypes, kappaVals, kappaMap);
+	fillP(N, particleTypes, P, E, kappaMap);
+
+	//get eq prob
+	double eq = getEqProb(initial, kappaVals, db, particleTypes, numTypes, targets);
+
+	//get mfpt 
+	double rate = getRate(initial, kappaVals, db, particleTypes, numTypes, Tconst, targets);
+
+	//get measure 1
+	/*
+	double c1 = .25;
+	double m1 = 1.0-exp(-c1*smallestBarrier(N, db, target, E));
+	*/
+	double m1 = stayingProb(N, T, initial, kappaVals, db, particleTypes, numTypes, 
+																	 Tconst, targets);
+
+	//get measure 2
+	misfold.setZero(num_states);
+	misfoldVector(N, db, target, misfold, E);
+	//std::cout << misfold << "\n";
+	double m2 = averageMisfoldEnergyTrap(N, T, initial, kappaVals, db, particleTypes, numTypes, 
+																	 Tconst, misfold, targets);
+	
+	std::cout << m2 << "\n";
+	double c2 = 0.5;
+	m2 = exp(-c2*m2);
+
+	/*
+	double m2 = finalTargetProb(N, T, initial, kappaVals, db, particleTypes, numTypes, 
+																	 Tconst, targets);
+	*/
+
+	
+
+
+	printf("X axis: eq = %f, m1 = %f\n", eq, m1);
+	printf("Y axis: mfpt = %f, m2 = %f\n", rate, m2);
+
+
+
+
+	//free memory
+	delete []P; delete []E; delete []Tconst; 
+	delete []kappaVals; delete []particleTypes;
+}
+
+
+void testMeasuresRecord(int N, Database* db, int initial, int target, bool useFile) {
+	//test measures - output eq prob and mfpt, along with test meaasures
+
+	//get database info
+	int num_states = db->getNumStates(); 
+
+	//set up particle identity
+	int* particleTypes = new int[N];
+	int numTypes;
+	if (useFile) { //use the fle to set identities
+		numTypes = readDesignFile(N, particleTypes);
+	}
+	else { //uses the function to set identities
+		int IC = 1; 
+		numTypes = setTypes(N, particleTypes, IC);
+	}
+	int numInteractions = numTypes*(numTypes+1)/2;
+
+	//set up sticky parameter values
+	double* kappaVals = new double[numInteractions];
+	readKappaFile(numInteractions, kappaVals);
+
+	//declare rate matrix
+	double* Tconst = new double[num_states*num_states]; //rate matrix - only forward entries
+
+	//init the rate matrix with zeros
+	for (int i = 0; i < num_states*num_states; i++) {
+		Tconst[i] = 0;
+	}
+
+	//get bonds->bonds+1 entries from mfpt estimates
+	std::vector<int> ground; //vector to hold all ground states
+	createTransitionMatrix(Tconst, num_states, db, ground);
+	std::cout << "All ground states:\n";
+	for (int i = 0; i < ground.size(); i++) {
+		std::cout << ground[i] << "\n";
+	}
+	std::cout << "\n";
+
+	//find all target states consistent with input target
+	std::vector<int> targets; targets.push_back(target);
+
+	//set interaction matrices
+	int* P = new int[N*N]; 
+	double* E = new double[N*N]; 
+
+	std::map<std::pair<int,int>,double> kappaMap;
+	makeKappaMap(numTypes, kappaVals, kappaMap);
+	fillP(N, particleTypes, P, E, kappaMap);
+
+
+	Eigen::VectorXd misfold;
+	double T = 5.0;
+	double M = 80;
+	double mult = 1.05;
+
+	//declare outfile
+	std::ofstream ofile;
+	ofile.open("paretoCorrelations2.txt");
+
+	//loop over kappa values for triangle
+	for (int i = 0; i < M; i++) {
+
+		//setup kappa values
+		for (int i = 0; i < N*N; i++) P[0] = 0; for (int i = 0; i < N*N; i++) E[0] = 0;
+		kappaMap.clear();
+		kappaVals[1] *= mult;
+		makeKappaMap(numTypes, kappaVals, kappaMap);
+		fillP(N, particleTypes, P, E, kappaMap);
+
+		//get eq prob
+		double eq = getEqProb(initial, kappaVals, db, particleTypes, numTypes, targets);
+
+		//get mfpt 
+		double rate = getRate(initial, kappaVals, db, particleTypes, numTypes, Tconst, targets);
+
+		//get measure 1
+		/*
+		double c1 = .25;
+		double m1 = 1.0-exp(-c1*smallestBarrier(N, db, target, E));
+		*/
+
+		
+		double m1 = stayingProb(N, T, initial, kappaVals, db, particleTypes, numTypes, 
+																	 Tconst, targets);
+		
+
+		/*
+		double m1 = 1.0 - exp(-harmonicMeanBarrier(N, db, target, E));
+		*/
+
+		//get measure 2
+		
+		misfold.setZero(num_states);
+		misfoldVector(N, db, target, misfold, E);
+		//std::cout << misfold << "\n";
+		double m2 = averageMisfoldEnergyTrap(N, T, initial, kappaVals, db, particleTypes, numTypes, 
+																		 Tconst, misfold, targets);
+		double c2 = 0.5;
+		m2 = exp(-c2*m2);
+		
+
+		/*
+		double m2 = finalTargetProb(N, T, initial, kappaVals, db, particleTypes, numTypes, 
+																	 Tconst, targets);
+		*/
+
+		ofile << eq << ' ' << rate << ' ' << m1 << ' ' << m2 << "\n";
+	}
+
+
+	//printf("X axis: eq = %f, m1 = %f\n", eq, m1);
+	//printf("Y axis: mfpt = %f, m2 = %f\n", rate, m2);
+
+	ofile.close();
+
+
+
+	//free memory
+	delete []P; delete []E; delete []Tconst; 
+	delete []kappaVals; delete []particleTypes;
+}
+
+void testMeasuresScatter(int N, Database* db, int initial, int target, bool useFile) {
+	//test measures - output eq prob and mfpt, along with test meaasures
+
+	//get database info
+	int num_states = db->getNumStates(); 
+
+	//set up particle identity
+	int* particleTypes = new int[N];
+	int numTypes;
+	if (useFile) { //use the fle to set identities
+		numTypes = readDesignFile(N, particleTypes);
+	}
+	else { //uses the function to set identities
+		int IC = 1; 
+		numTypes = setTypes(N, particleTypes, IC);
+	}
+	int numInteractions = numTypes*(numTypes+1)/2;
+
+	//set up sticky parameter values
+	double* kappaVals = new double[numInteractions];
+	readKappaFile(numInteractions, kappaVals);
+
+	//declare rate matrix
+	double* Tconst = new double[num_states*num_states]; //rate matrix - only forward entries
+
+	//init the rate matrix with zeros
+	for (int i = 0; i < num_states*num_states; i++) {
+		Tconst[i] = 0;
+	}
+
+	//get bonds->bonds+1 entries from mfpt estimates
+	std::vector<int> ground; //vector to hold all ground states
+	createTransitionMatrix(Tconst, num_states, db, ground);
+	std::cout << "All ground states:\n";
+	for (int i = 0; i < ground.size(); i++) {
+		std::cout << ground[i] << "\n";
+	}
+	std::cout << "\n";
+
+	//find all target states consistent with input target
+	std::vector<int> targets; targets.push_back(target);
+
+	//set interaction matrices
+	int* P = new int[N*N]; 
+	double* E = new double[N*N]; 
+
+	std::map<std::pair<int,int>,double> kappaMap;
+	makeKappaMap(numTypes, kappaVals, kappaMap);
+	fillP(N, particleTypes, P, E, kappaMap);
+
+
+	Eigen::VectorXd misfold;
+	double T = 5.0;
+	double M = 21;
+	double mult = 1.5;
+	double base = 0.3;
+
+	kappaVals[0] = kappaVals[1] = kappaVals[2] = base;
+
+	//declare outfile
+	std::ofstream ofile;
+	ofile.open("paretoCorrelationsScatter.txt");
+
+	//loop over kappa values for triangle
+	for (int i = 0; i < M; i++) {
+		kappaVals[0] *= mult;
+		printf("Outer loop number %d\n", i);
+		for (int j = 0; j < M; j++) {
+			kappaVals[1] *= mult;
+			for (int k = 0; k < M; k++) {
+
+				//setup kappa values
+				for (int i = 0; i < N*N; i++) P[0] = 0; for (int i = 0; i < N*N; i++) E[0] = 0;
+				kappaMap.clear();
+				kappaVals[2] *= mult;
+				makeKappaMap(numTypes, kappaVals, kappaMap);
+				fillP(N, particleTypes, P, E, kappaMap);
+
+				//get eq prob
+				double eq = getEqProb(initial, kappaVals, db, particleTypes, numTypes, targets);
+
+				//get mfpt 
+				double rate = getRate(initial, kappaVals, db, particleTypes, numTypes, Tconst, targets);
+
+				//get measure 1
+				/*
+				double c1 = .25;
+				double m1 = 1.0-exp(-c1*smallestBarrier(N, db, target, E));
+				*/
+				double m1 = stayingProb(N, T, initial, kappaVals, db, particleTypes, numTypes, 
+																			 Tconst, targets);
+
+				//get measure 2
+				
+				misfold.setZero(num_states);
+				misfoldVector(N, db, target, misfold, E);
+				//std::cout << misfold << "\n";
+				double m2 = averageMisfoldEnergyEnd(N, T, initial, kappaVals, db, particleTypes, numTypes, 
+																				 Tconst, misfold, targets);
+				double c2 = 1;
+				m2 = exp(-c2*m2);
+				
+
+				/*
+				double m2 = finalTargetProb(N, T, initial, kappaVals, db, particleTypes, numTypes, 
+																			 Tconst, targets);
+				*/
+
+				ofile << eq << ' ' << rate << ' ' << m1 << ' ' << m2 << "\n";
+			}
+			kappaVals[2] = base;
+		}
+		kappaVals[1] = base;
+	}
+
+
+	//printf("X axis: eq = %f, m1 = %f\n", eq, m1);
+	//printf("Y axis: mfpt = %f, m2 = %f\n", rate, m2);
+
+	ofile.close();
+
+
+
+	//free memory
+	delete []P; delete []E; delete []Tconst; 
+	delete []kappaVals; delete []particleTypes;
+}
 
 
 

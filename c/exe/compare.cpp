@@ -33,12 +33,12 @@ int main(int argc, char* argv[]) {
 
 	//get the mapping between structures
 	int NC;
-	bd::structureMap(infile, db, M2A, NC);
+	//bd::structureMap(infile, db, M2A, NC);
 	printf("Structures have been mapped\n");
 
 	//make the transition matrix
-	bd::printTM(db, M2A, NC);
-	//bd::printTM(db); //no mapping
+	//bd::printTM(db, M2A, NC);
+	bd::printTM(db); //no mapping
 	printf("Transition matrix has been printed\n");
 
 

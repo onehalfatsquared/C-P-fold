@@ -10,7 +10,7 @@
 #include <iostream>
 #include "../defines.h"
 
-#define HYDRO_CUT 1.17 //1.12 for long range (noHD), 1.2 for short range (HD)
+#define HYDRO_CUT 1.06 //was 1.06 at last working value - 1.04 works for rho=50
 namespace bd {
 
 // ********************************************************************** //
@@ -76,7 +76,7 @@ HCC* extractData(std::string& filename, int N, int maxT) {
 	int num_clusters; int file_clusters; bool bug_flag = false;
 	in_str >> file_clusters; num_clusters = file_clusters;
 	if (N == 7) { //addresses the output bug for n=7
-		num_clusters = 3087;
+		//num_clusters = 3087;
 	}
 	if (file_clusters != num_clusters) {
 		bug_flag = true;
@@ -408,6 +408,7 @@ void determineTransitionTimes(HCC* hc, Database* db, double tps, std::ostream& o
 	int bonds;
 
 	int folded = 0;
+	int errored = 0;
 
 	//loop over each cluster in HHC
 	for (int i = 0; i < nc; i++) {
@@ -444,9 +445,23 @@ void determineTransitionTimes(HCC* hc, Database* db, double tps, std::ostream& o
 
 
 			if (reset) { //either a bond broke, or two bonds formed at once - ignore rest of traj.
-				broken[i] = true;
-				printf("Cluster %d broke. Ignoring trajectory\n", i);
-				break;
+
+				//at first, check if problem gets fixed next time step
+				getCoordinates(currentCluster, X, N, time+1);
+				reset = false;
+				checkState(N, X, old_state, db, reset, new_state);
+
+				if (reset) { //this only gets called when two bonds form at once
+					broken[i] = true;
+					for (int i = 0; i < N*DIMENSION; i++) {
+						std::cout << X[i] << "\n";
+					}
+					printf("Cluster %d errored. Ignoring trajectory\n", i);
+					errored++;
+					
+
+					break;
+				}
 			}
 
 			if (new_state != old_state) { //new state reached, update data
@@ -469,6 +484,10 @@ void determineTransitionTimes(HCC* hc, Database* db, double tps, std::ostream& o
 			}
 		}
 	}
+
+	printf("Fully Folded Trajectories: %d of %d\n", folded, nc);
+	printf("Errored Trajectories: %d of %d\n", errored, nc);
+	printf("Incomplete Trajectories: %d of %d\n", nc - folded - errored, nc);
 
 	//transition_times now has all the data, put it into db
 	//loop over transitions from every initial -> final state
@@ -514,6 +533,7 @@ void determineTransitionStates(HCC* hc, Database* db, double tps, std::ostream& 
 	int bonds;
 
 	int folded = 0;
+	int errored = 0;
 
 	//loop over each cluster in HHC
 	for (int i = 0; i < nc; i++) {
@@ -550,9 +570,22 @@ void determineTransitionStates(HCC* hc, Database* db, double tps, std::ostream& 
 
 
 			if (reset) { //either a bond broke, or two bonds formed at once - ignore rest of traj.
-				broken[i] = true;
-				printf("Cluster %d broke. Ignoring trajectory\n", i);
-				break;
+				//at first, check if problem gets fixed next time step
+				getCoordinates(currentCluster, X, N, time+1);
+				reset = false;
+				checkState(N, X, old_state, db, reset, new_state);
+
+				if (reset) { //this only gets called when two bonds form at once
+					broken[i] = true;
+					for (int i = 0; i < N*DIMENSION; i++) {
+						std::cout << X[i] << "\n";
+					}
+					printf("Cluster %d errored. Ignoring trajectory\n", i);
+					errored++;
+					
+
+					break;
+				}
 			}
 
 			if (new_state != old_state) { //new state reached, update data
@@ -575,6 +608,10 @@ void determineTransitionStates(HCC* hc, Database* db, double tps, std::ostream& 
 			}
 		}
 	}
+
+	printf("Fully Folded Trajectories: %d of %d\n", folded, nc);
+	printf("Errored Trajectories: %d of %d\n", errored, nc);
+	printf("Incomplete Trajectories: %d of %d\n", nc - folded - errored, nc);
 
 	//transition_times now has all the data, put it into db
 	//loop over transitions from every initial -> final state
@@ -761,8 +798,23 @@ void distributionFHT(HCC* hc, Database* db, std::vector<double>& q, int which) {
 			checkState(N, X, old_state, db, reset, new_state);
 
 
+			
 			if (reset) { //either a bond broke, or two bonds formed at once - ignore rest of traj.
-				break;
+				//at first, check if problem gets fixed next time step
+				getCoordinates(currentCluster, X, N, time+1);
+				reset = false;
+				checkState(N, X, old_state, db, reset, new_state);
+
+				if (reset) { //this only gets called when two bonds form at once
+					//broken[i] = true;
+					for (int i = 0; i < N*DIMENSION; i++) {
+						std::cout << X[i] << "\n";
+					}
+					printf("Cluster %d errored. Ignoring trajectory\n", i);
+					//errored++;
+					
+					break;
+				}
 			}
 
 			if (new_state != old_state) { //new state reached, update data

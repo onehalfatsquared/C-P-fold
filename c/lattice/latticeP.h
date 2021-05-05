@@ -12,6 +12,7 @@
 #include "pair.h"
 #include "design.h"
 #include "nauty.h"
+#include "genetics.h"
 #include "../defines.h"
 
 
@@ -24,6 +25,8 @@ struct pair_hash
     }
 };
 
+// now defined in genetics.h
+/*
 class RandomNo{
 	std::mt19937 generator; 
 	std::uniform_real_distribution<double> uDist;
@@ -40,6 +43,7 @@ class RandomNo{
     	return gDist(generator);
     }
 };
+*/
 
 namespace lattice {
 
@@ -142,6 +146,22 @@ class Database {
 Database* readData(std::string& filename);
 
 
+class Person2 : public ga::Person {
+	public:
+		Person2();
+		Person2(int N_, int num_interactions_, int numTypes_, int* t, double* kV);
+		Person2(const Person2& old);
+
+		
+
+		void evalStats(int N, Database* db, int initial, std::vector<int> targets, 
+								 double* eq, double* Tconst, double* T, double* m);
+		void evalStatsSampling(double Tf, double ts, int samples, int* M_target);
+		Person2 mate(Person2 partner, bool, RandomNo*);
+};
+
+
+
 
 //allow unordered map to exist between pair and Particle*
 typedef std::unordered_map<std::pair<int,int>,Particle*,pair_hash> particleMap; 
@@ -188,6 +208,8 @@ void rejectMove(int particle, int x_old, int y_old, Particle* chain);
 bool takeStep(int N, Particle* chain, particleMap& cMap,
 							RandomNo* rngee, double eps, double& energy);
 void runMCMC(int N, bool useFile);
+void testSampling(int N);
+void testYield(int N);
 
 //sampling functions
 void buildPDB(int N);
@@ -200,5 +222,10 @@ void estimateEqProbs(int N, Database* db);
 //design functions
 void constructScatterTOYL(int N, Database* db, int initial, int target, bool useFile);
 void HPscatter(int N, Database* db, int initial, int target);
+void evalStatsL(int N, Database* db, int initial, int target, bool useFile);
 
+//genetic algorithm
+void performGAevolution(int N, Database* db, int initial, int target, bool useFile);
+void performGAlattice_sampling(int N, bool useFile);
+void testMeasuresRecord(int N, Database* db, int initial, int target, bool useFile);
 }

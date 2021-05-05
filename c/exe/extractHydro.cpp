@@ -23,7 +23,7 @@ int main(int argc, char* argv[]) {
 	std::string infile2 (argv[2]);
 	double dt = atof(argv[3]);
 	int n_save = atoi(argv[4]);
-	int maxT = 2000;
+	int maxT = 5000;
 
 	//construct empty database from file with no mfpt data
 	bd::Database* db = bd::readData(infile2);

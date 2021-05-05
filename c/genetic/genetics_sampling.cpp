@@ -2,7 +2,7 @@
 #include "bDynamics.h"
 
 #define PI 3.1415926
-#define CUT 1.1
+#define CUT 1.2
 
 namespace ga {
 
@@ -10,8 +10,9 @@ void printChain(double* X, int N) {
 	//print out the chain
 
 	for (int i = 0; i < N; i++) {
-		printf("(%f,%f)\n", X[DIMENSION*i], X[DIMENSION*i+1]);
+		printf("%f\n%f\n", X[DIMENSION*i], X[DIMENSION*i+1]);
 	}
+	printf("\n");
 
 }
 
@@ -157,8 +158,7 @@ double getMisfoldEnergy(int N, int* M, int* M_target, double* E) {
 
 double rateSampleBarrier(int N, double Tf, double DT, double rho, double beta, double* E, int* P,
 								         int method, int pot, int* M_target) {
-	//run trajectory until Tf. Compute a time average of the energy corresponding 
-	//to incorrect bonds. Divide by 4? 
+	//run trajectory until Tf. return misfolded energy barrier
 
 
 	//set the target config
@@ -168,29 +168,75 @@ double rateSampleBarrier(int N, double Tf, double DT, double rho, double beta, d
 	//set the adjacncy matrix
 	int* M = new int[N*N]; for (int i = 0; i < N*N; i++) M[i] = 0;
 
-	//solve sde, check if target state is hit
-	double t = 0; double misfoldE = 0;
-	while (t < Tf) {
-		bd::solveSDE(X, N, DT, rho, beta, E, P, method, pot);
-		t += DT;
+	//solve sde
+	bd::solveSDE(X, N, Tf, rho, beta, E, P, method, pot);
 
-		//get current adj mat
-		bd::getAdjCut(X, N, M, CUT);
+	//get current adj mat
+	bd::getAdjCut(X, N, M, CUT);
 
-		//determine the energy of inccorect bonds
-		misfoldE += getMisfoldEnergy(N, M, M_target, E);
-		//std::cout << "Bad energy " << misfoldE << "\n";
-		
-	}
+	//determine the energy of inccorect bonds
+	double misfoldE = getMisfoldEnergy(N, M, M_target, E);
+	//std::cout << "Bad energy " << misfoldE << "\n";
 
 	//free memory
 	delete []X; delete []M;
 
-	double Nt = Tf/DT;
 	//return sample
-	return misfoldE / Nt;
+	return misfoldE;
 }
 
+double rateSampleTrap(int N, double Tf, double DT, double ts, double rho, double beta, double* E, int* P,
+								         int method, int pot, int* M_target) {
+	//run trajectory until stuck in a state for > t_s. return misfolded energy barrier
+
+	//set the target config
+	double* X = new double[N*DIMENSION];
+	bd::setupChain(X,N);
+
+	//set the adjacency matrix
+	int* M = new int[N*N]; for (int i = 0; i < N*N; i++) M[i] = 0;
+	int* M_prev = new int[N*N]; for (int i = 0; i < N*N; i++) M[i] = 0;
+	bd::getAdjCut(X, N, M, CUT);
+	bd::getAdjCut(X, N, M_prev, CUT);
+
+	//solve sde, check for traps
+	double t = 0; double lastEvent = 0;
+	double misfoldE = 0;
+	while (t < Tf) {
+		//solve sde
+		bd::solveSDE(X, N, DT, rho, beta, E, P, method, pot);
+		t += DT;
+
+		//get adj matrix, compare to previous
+		bd::getAdjCut(X, N, M, CUT);
+		bool same = bd::checkSame(M, M_prev, N);
+		//if different, log new last event time and new adj matrix
+		if (!same) {
+			lastEvent = t;
+			//printf("Action at %f\n", t);
+			//printChain(X,N);
+			for (int i = 0; i < N*N; i++) M_prev[i] = M[i];
+		}
+
+		//check for traps
+		if (t - lastEvent > ts) {
+			//hit a trap, compute misfold energy
+			misfoldE = getMisfoldEnergy(N, M, M_target, E);
+			//printf("Stuck in state for %f, misfold E = %f\n",t-lastEvent, misfoldE);
+			//printChain(X,N);
+			break;
+		}
+	}
+
+	//printChain(X,N);
+	misfoldE = getMisfoldEnergy(N, M, M_target, E);
+
+	//free memory
+	delete []X; delete []M; delete []M_prev;
+
+	//return sample
+	return misfoldE;
+}
 
 
 void doSampling(int N, double Tf, int* types, std::map<std::pair<int,int>,double> kappa,
@@ -209,12 +255,14 @@ void doSampling(int N, double Tf, int* types, std::map<std::pair<int,int>,double
 
 	eq = eqSample(N, Tf, DT, rho, beta, E, P,method, pot, M_target, X_target);
 	//time = rateSample(N, Tf, DT, rho, beta, E, P,method, pot, M_target);
-	time = exp(-rateSampleBarrier(N, Tf, DT, rho, beta, E, P,method, pot, M_target));
+	time = exp(-rateSampleBarrier(N, Tf, DT, rho, beta, E, P, method, pot, M_target));
 
 }
 
 void Person::evalStats(double Tf, int samples, int* M_target, double* X_target) {
 	//evaluate a rate and eq prob surrogate by sampling
+	//eq - time spent in target after being initialize there
+	//rate - average of exponential of misfolded energy
 
 	//estimate objectives from given number of sample trajectories
 	double eqEstimate = 0; double rateEstimate = 0;
@@ -254,6 +302,74 @@ void Person::evalStats(double Tf, int samples, int* M_target, double* X_target) 
 
 } 
 
+double smallestBarrier(int N,  int* M_target, double* E) {
+	//determine the weakest bond in the target state under the given configuration
+
+	double minE = 40;
+	for (int i = 0; i < N; i++) {
+		for (int j = i+2; j < N; j++) {
+			if ( M_target[bd::toIndex(i,j,N)] == 1 ) {
+		    double energy = E[bd::toIndex(i,j,N)];
+		    if (energy < minE) {
+		    	minE = energy;
+		    	//printf("minE is %f\n", minE);
+		    }
+			}
+		}
+	}
+
+	return minE;
+}
+
+double harmonicBarrier(int N,  int* M_target, double* E) {
+	//estimate a barrier to break first bond by harmonic average of bond strengths in target
+
+	double recip = 0.0;
+	for (int i = 0; i < N; i++) {
+		for (int j = i+2; j < N; j++) {
+			if ( M_target[bd::toIndex(i,j,N)] == 1 ) {
+		    double energy = E[bd::toIndex(i,j,N)];
+		    //printf("i %d, j %d, E %f\n", i,j,energy);
+		    recip += 1.0 /energy;
+			}
+		}
+	}
+
+	return 1.0 / recip ;
+}
+
+void Person::evalStats(double Tf, double ts, int samples, int* M_target) {
+	//eval a eq and rate surrogate
+	//eq - 1-exp(smallest barrier) -> no sampling needed
+	//rate - expoential of average misfolded trap energy
+
+	//sampling parameters
+	double DT = 0.01;
+	double beta = 1.0;  double rho = 20;
+	double method = 1; double pot = 0;
+
+	//evaluate the eq first
+	int* P = new int[N*N]; for (int i = 0; i < N*N; i++) P[i] = 0;
+	double* E = new double[N*N]; for (int i = 0; i < N*N; i++) E[i] = 0;
+	bd::fillP(N, types, P, E, kappa);
+	double c1 = 1.0;
+	//Eq = 1.0 - exp(-c1*smallestBarrier(N, M_target, E));
+	Eq = 1.0 - exp(-c1*harmonicBarrier(N, M_target, E));
+
+	//sample for the rate
+	double rateEst = 0;
+	for (int i = 0; i < samples; i++) {
+		//rateEst += rateSampleBarrier(N, Tf, DT, rho, beta, E, P, method, pot, M_target);
+		rateEst += rateSampleTrap(N, Tf, DT, ts, rho, beta, E, P, method, pot, M_target);
+	}
+	rateEst /= samples;
+	double c2 = 1.0;
+	Rate = exp(-c2*rateEst);
+
+	delete []E; delete []P;
+
+}
+
 void Person::applyBound(double lower, double upper) {
 	//apply bounds to kappa values
 
@@ -282,14 +398,15 @@ void perform_evolution_sampling(int N, bool useFile) {
 	Eigen::setNbThreads(0);
 
 	//parameters to the genetic algorithm
-	int generations = 20;
-	int pop_size    = 50;
+	int generations = 30;
+	int pop_size    = 100;
 	double elite_p  = 0.1;
 	double mates_p  = 0.4;
 	bool printAll   = false;         //set true to make movie of output
 
 	//sampling parameters
-	double Tf = 5.0;
+	double Tf = 10.0;
+	double ts = 4.0;
 	int samples = 30;
 
 	//if we have prior estimates of the max rate and eqProb, set here.
@@ -305,7 +422,7 @@ void perform_evolution_sampling(int N, bool useFile) {
 	else { //uses the function to set identities
 		//int IC = 1; 
 		//numTypes = bd::setTypes(N, particleTypes, IC);
-		numTypes = 3;
+		numTypes = 2;
 	}
 	int numInteractions = numTypes*(numTypes+1)/2;
 
@@ -338,7 +455,8 @@ void perform_evolution_sampling(int N, bool useFile) {
 		//create a person, evaluate their stats
 		Person p = Person(N, numInteractions, numTypes, particleTypes, kappaVals);
 		p.applyBound(0.1, 1000);
-		p.evalStats(Tf, samples, M_target, X_target);
+		//p.evalStats(Tf, samples, M_target, X_target);
+		p.evalStats(Tf, ts, samples, M_target);
 		p.evalFitness(eqMax, rateMax);
 		pop_array[i] = p;
 		//printf("e %f, r %f, f %f\n", pop_array[i].Eq, pop_array[i].Rate, pop_array[i].fitness);
@@ -431,7 +549,8 @@ void perform_evolution_sampling(int N, bool useFile) {
 			Person p2 = population[r2];
 			Person kid = p1.mate(p2, useFile, rngee);
 			kid.applyBound(0.1, 1000);
-			kid.evalStats(Tf, samples, M_target, X_target);
+			//kid.evalStats(Tf, samples, M_target, X_target);
+			kid.evalStats(Tf, ts, samples, M_target);
 			kid.evalFitness(eqMax, rateMax);
 			pop_array[i] = kid;
 		}

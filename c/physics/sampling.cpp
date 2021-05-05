@@ -809,8 +809,8 @@ void sampleTrajectories(int N, Database* db, int initial) {
 	int rho = 40; double beta = 0.99; double DT = 0.01;
 	int pot = 0;  //set potential. 0 = morse, 1 = LJ
 	int method = 1; //solve SDEs with EM
-	int samples = 800; 
-	double tf = 400;
+	int samples = 400; 
+	double tf = 25.0;
 
 	//fill in the lumpMap for the DB
 	printf("Getting indices of lumped permutation states...\n");
@@ -826,11 +826,14 @@ void sampleTrajectories(int N, Database* db, int initial) {
 	bd::makeKappaMap(numTypes, kappa, kmap);
 	int* P = new int[N*N];
 	double* E = new double[N*N];
+	for (int i = 0; i < N*N; i++) {
+		P[i] = E[i] = 0;
+	}
 	fillP(N, types, P, E, kmap);
 
 	//init file to store output
 	std::ofstream ofile;
-	ofile.open("samplingTrajectories.txt");
+	ofile.open("samplingTrajectoriesTriangleTestX.txt");
 
 	//print the number of trajectories and final time
 	ofile << samples << "\n";
@@ -838,6 +841,9 @@ void sampleTrajectories(int N, Database* db, int initial) {
 
 	//make array of vectors to store output for parallel run
 	std::vector<double>* output = new std::vector<double>[samples];
+
+	//determine index of target in lump if needed
+	//printf("Index is %d\n", db->lumpMap[67]);
 
 	//do the simulations
 	#pragma omp parallel for
@@ -854,6 +860,7 @@ void sampleTrajectories(int N, Database* db, int initial) {
 		setupChain(X0, N);
 		int state = initial; int new_state = initial;
 		double time = 0; 
+		//printCluster(X0,N);
 
 		//print initial state to file
 		//ofile << time << " " << db->lumpMap[state] << " ";
@@ -866,13 +873,26 @@ void sampleTrajectories(int N, Database* db, int initial) {
 
 			//exclude bonds with no interaction possible
 			for (int i = 0; i < N*N; i++) M[i]=0;	
-			getAdjCut(X0, N, M, 1.1);
+			getAdjCut(X0, N, M, 1.07);
 			for (int i = 0; i < N*N; i++) {
+				//printf("P is %d, M is %d\n", P[i], M[i]);
 				if (P[i] == 0 && M[i] == 1) {
+					//printf("hello\n");
 					M[i] = 0;
 				}
 			}
+			//printAM(N,M);
 			new_state = findMatrix(M,N,db);
+			//printf("Old state %d, new state %d\n", state, new_state);
+
+			/*
+			if (db->lumpMap[new_state] == 35) {
+				printf("cluster %d\n", new_state);
+				printCluster(X0,N);
+				abort();
+			}
+			*/
+			
 
 			if (state != new_state) {
 				//determine the bond that formed
@@ -893,6 +913,7 @@ void sampleTrajectories(int N, Database* db, int initial) {
 				//printf("Bond is between %d and %d\n", p1, p2);
 
 				//if AA breaks, kick out of well
+				/*
 				if (types[p1] == 0 && types[p2] == 0 && 
 					(*db)[state].getBonds() > (*db)[new_state].getBonds()) {
 					//printCluster(X0,N);
@@ -906,6 +927,7 @@ void sampleTrajectories(int N, Database* db, int initial) {
 
 					//printf("Original %f, %f  Final %f, %f\n", x1, y1, X0[p1*2], X0[p1*2+1]);
 				}
+				*/
 
 				state = new_state;
 				//ofile << time << " " << db->lumpMap[state] << " ";
@@ -916,6 +938,10 @@ void sampleTrajectories(int N, Database* db, int initial) {
 
 		//print a new line and go to the next trajectory
 		//ofile << "\n";
+
+		if (db->lumpMap[state] == 35) {
+				//printCluster(X0,N);
+			}
 
 		delete []X0; delete []M;
 
@@ -1096,10 +1122,11 @@ void sampleFirstExit(int N, int initial, Database* db) {
 	int rho = 35; double beta = 1; double DT = 0.01; int Kh = 1000;
 	int pot = 0;  //set potential. 0 = morse, 1 = LJ
 	int method = 1; //solve SDEs with EM
-	int samples = 500; //number of samples to get
+	int samples = 150; //number of samples to get
 
 	//cutoff for qsd
 	int t_cut = 100;
+	t_cut = 0;   //no qsd
 
 	//setup simulation
 	double Eh = stickyNewton(8, rho, Kh, beta); //get energy corresponding to kappa
@@ -1110,6 +1137,9 @@ void sampleFirstExit(int N, int initial, Database* db) {
 
 	//make a vector to store samples
 	std::vector<double> q_samples;
+
+	//if lumped states are needed
+	lumpPerms(db);
 
 	//run BD
 	#pragma omp parallel 
@@ -1153,7 +1183,8 @@ void sampleFirstExit(int N, int initial, Database* db) {
 					double q = gyrationRadius(N, X);
 					//double q = boop2d(N, X);
 					//double q = end2end(N, X);
-					q_samples.push_back(q);
+					//q_samples.push_back(q);
+					q_samples.push_back(db->lumpMap[new_state]); //for distribution data
 					std::cout << i << "\n";
 					//printCluster(X,N);
 					break;

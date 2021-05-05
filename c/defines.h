@@ -6,7 +6,7 @@
 #define BETA           1       // inverse temp
 #define POTENTIAL      0       // (-1,0,1) -> (MC, Morse, Lennard Jones)
 #define RANGE         40			 // range paremeter for potentials
-#define EULER_TS    100e-6       // time step for EM integrator
+#define EULER_TS    5e-6       // time step for EM integrator  5e-6 for bd, 50e-6 for sampling
 #define RK_TS       1e-6       // time step for RK integrator
 #define SAMPLES      1000       // number of samples to obtain (per prcoessor)
 #define EQ           500       // number of samples to equilibrate for (change to time?) 

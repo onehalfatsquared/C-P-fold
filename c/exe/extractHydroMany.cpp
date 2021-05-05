@@ -22,7 +22,7 @@ int main(int argc, char* argv[]) {
 	int hydro = atoi(argv[1]);
 	int num_files = atoi(argv[2]);
 	std::string db_file (argv[3]);
-	int maxT = 2000;
+	int maxT = 5000;
 
 	int runType = 2;
 	std::ofstream ofile;
@@ -34,12 +34,17 @@ int main(int argc, char* argv[]) {
 	if (hydro == 0) { //hydro is off
 		dt = 0.01;
 		n_save = 40;
-	  base += "realnoHD/real_noHD";
+	  base += "trueNOHD/trueNOHD";
 	}
-	else { //hydro is on
+	else if (hydro == 1) { //hydro is on
 		dt = 0.1;
 		n_save = 40;
-		base += "realHD/real_data";
+		base += "trueHD/trueHD";
+	}
+	else if(hydro == 2) { //other test
+		dt = 0.1;
+		n_save = 40;
+		base += "hd50/hd50_test";
 	}
 
 	//get timestep info
@@ -54,7 +59,7 @@ int main(int argc, char* argv[]) {
 
 
 	//fill HCC data structure with hydrodynamics data
-	std::string file1 = base + "0.config";
+	std::string file1 = base + "1.config";
 	bd::HCC* hc = bd::extractData(file1, N, maxT);
 	//use HD data to fill a database 
 	if (runType == 0) {
@@ -70,7 +75,7 @@ int main(int argc, char* argv[]) {
 
 	//delete hc, loop over the rest of the files, creating hc and db, and combine db
 	delete hc;
-	for (int i = 1; i <= num_files; i++) {
+	for (int i = 2; i <= num_files; i++) {
 		//create the i-th filename
 		std::stringstream ss;
 		ss << i;

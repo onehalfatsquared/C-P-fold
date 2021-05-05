@@ -68,9 +68,19 @@ int main(int argc, char* argv[]) {
 
 		lattice::Database* db = lattice::readData(dbFile);
 
+		lattice::evalStatsL(N, db, 0, target, useFile);
 		//lattice::constructScatterTOYL(N, db, 0, target, useFile);
-		lattice::HPscatter(N, db, 0, target);
+		//lattice::HPscatter(N, db, 0, target);
+		//lattice::performGAevolution(N, db, 0, target, useFile);
+		//lattice::testMeasuresRecord(N, db, 0, target, useFile);
+		
+
 		delete db;
+	}
+	else if (runType == 3) { //genetic algo sampling 
+		//lattice::performGAlattice_sampling(N, useFile);
+		//lattice::testSampling(N);
+		lattice::testYield(N);
 	}
 
 	return 0;

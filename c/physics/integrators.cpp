@@ -86,6 +86,7 @@ void fillP(int N, int* particleTypes, int* P, double* E,
 					 std::map<std::pair<int,int>,double>& kappa) {
 	//fill interaction matrices with values
 
+	double range = 40;
 	for (int i = 0; i < N-1; i++) {
 		P[toIndex(i,i+1,N)] = 1; E[toIndex(i,i+1,N)] = 14; 
 		P[toIndex(i+1,i,N)] = 1; E[toIndex(i+1,i,N)] = 14; 
@@ -93,15 +94,15 @@ void fillP(int N, int* particleTypes, int* P, double* E,
 			int p1 = particleTypes[i]; 
 			int p2 = particleTypes[j];
 			double kval = kappa[{p1,p2}];
-			if (kval > 0.09) {
-				double energy = stickyNewton(8.0, RANGE, kval, BETA); 
+			if (kval > 0.01) {
+				double energy = stickyNewton(8.0, range, kval, BETA); 
 				//printf("Energy is %f\n", energy);
 				P[toIndex(i,j,N)] = 1; E[toIndex(i,j,N)] = energy; 
 				P[toIndex(j,i,N)] = 1; E[toIndex(j,i,N)] = energy; 
 			}
 			else{
-				P[toIndex(i,j,N)] = 0; E[toIndex(i,j,N)] = 0.01; 
-				P[toIndex(j,i,N)] = 0; E[toIndex(j,i,N)] = 0.01; 
+				P[toIndex(i,j,N)] = 0; E[toIndex(i,j,N)] = 0.1; 
+				P[toIndex(j,i,N)] = 0; E[toIndex(j,i,N)] = 0.1; 
 			}
 		}
 	}

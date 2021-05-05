@@ -6,7 +6,7 @@ clear
 %                   N=10: 12, 
 
 %set parameters
-rng(55) %set random seed   
+%rng(55) %set random seed   
 N = 6; %Number of particles
 r = 10; %Range parameter to pair potential
 K = [1200,80,0.5]; %vector of sticky parameters. (1->1, 1<->2, 2->2). 
@@ -26,6 +26,15 @@ for i = 1:N-1
     E(i,i+1) = 10;
 end
 
+E = [0, 11, 11, 0.1, 11, 11;
+     0, 0, 11, 0.1, 0.1, 0.1;
+     0, 0, 0, 11, 12, 0.1;
+     0, 0, 0, 0, 11, 0.1;
+     0, 0, 0, 0, 0, 11;
+     0, 0, 0, 0, 0, 0];
+ 
+ E = E + E';
+
 
 %do simulation
 [t,T] = solveSDE(X0,N,T,r,E,beta,P,method,frames); %get a trajectory
@@ -33,7 +42,7 @@ Xf = T(end,:)'; %get final state
 
 %make plots
 cPlot(Xf,types,P); 
-M = makeMovie(t,T,types,P); 
+%M = makeMovie(t,T,types,P); 
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

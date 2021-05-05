@@ -42,7 +42,7 @@ public:
 
 	//con(de)structors
 	Person();
-	~Person();
+	virtual ~Person();
 
 	Person(int N, int num_interactions, int numTypes,  int* types, double* kappaVals);
 
@@ -79,6 +79,7 @@ public:
 	void evalFitness(double eq, double rate);
 
 	void evalStats(double Tf, int samples, int* M_target, double* X_target);
+	void evalStats(double Tf, double ts, int samples, int* M_target);
 	void applyBound(double lower, double upper);
 
 private:
@@ -86,6 +87,7 @@ private:
 
 };
 
+void readTargetFile(int* M_target, double* X_target);
 
 
 double sampleKappa(int N, RandomNo* rngee);
@@ -102,6 +104,9 @@ void perform_evolution_sampling(int N, bool useFile);
 
 void printPopulation(std::vector<Person> population, int pop_size, std::ofstream& ofile );
 void printTypes(std::vector<Person> population, int pop_size, int N);
+
+double getMisfoldEnergy(int N, int* M, int* M_target, double* E);
+double harmonicBarrier(int N,  int* M_target, double* E);
 
 
 

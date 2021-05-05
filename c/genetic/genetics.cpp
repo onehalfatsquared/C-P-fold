@@ -118,8 +118,9 @@ Person Person::mate(Person partner, bool useFile, RandomNo* rngee) {
 		}
 	}
 	else {
+		//double p = rngee->getU();     //use this to keep the parents whole string
 		for (int i = 0; i < N; i++) {
-			double p = rngee->getU();
+			double p = rngee->getU();  //use this to get particles individually
 			
 			if (p < 0.45) { //parent 1
 				t[i] = types[i];
@@ -233,16 +234,19 @@ void sampleParameters(int N, int numInteractions, double* kappaVals, int* partic
 }
 
 
-bool is_dominated(int pop_size, double x, double y, double* xAll, double* yAll) {
+bool is_dominated(int pop_size, int me, double x, double y, double* xAll, double* yAll) {
 	//determine of the points x and y are dominated by any others in the set
-	double tol = -1e-6;
+	double tol = 1e-12;
 
 	for (int i = 0; i < pop_size; i++) {
-		double d1 = x - xAll[i]; double d2 = y - yAll[i];
-		bool s1 = (d1 > tol); bool s2 = (d2 > tol);
-		//printf("Diffs %f and %f, bools %d and %d\n", d1, d2, s1, s2);
-		if (!s1 && !s2) {
-			return true;
+		if (i != me) {
+			double d1 = x - xAll[i]; double d2 = y - yAll[i];
+			bool s1 = (d1 > tol); bool s2 = (d2 > tol);
+			double S = fabs(d1) + fabs(d2);
+			//printf("Diffs %f and %f, bools %d and %d\n", d1, d2, s1, s2);
+			if (!s1 && !s2 && S > tol) { 
+				return true;
+			}
 		}
 	}
 
@@ -255,7 +259,7 @@ void non_dominated_set(int pop_size, double* xAll, double* yAll, std::vector<int
 	for (int i = 0; i < pop_size; i++) {
 		//printf("DOing person %d\n\n\n", i);
 		double x = xAll[i]; double y = yAll[i];
-		bool D = is_dominated(pop_size, x, y, xAll, yAll);
+		bool D = is_dominated(pop_size, i, x, y, xAll, yAll);
 		if (!D) {
 			nonDom.push_back(i);
 		}
@@ -308,21 +312,23 @@ void perform_evolution(int N, bd::Database* db, int initial, int target, bool us
 
 	//parameters to the genetic algorithm
 	int generations = 300;
-	int pop_size    = 1500;
+	int pop_size    = 750;
 	double elite_p  = 0.1;
-	double mates_p  = 0.5;
+	double mates_p  = 0.4;
 	bool printAll   = false;         //set true to make movie of output
-	bool perturb    = false;          //set true for sensitivity testing
+	bool perturb    = true;          //set true for sensitivity testing
 
 	//if we have prior estimates of the max rate and eqProb, set here.
 	//otherwise, this will update, adaptively. 
-	double rateMax = 0.5; double eqMax = 0.14;
+	double rateMax = 0.1; double eqMax = 0.1;
 
 	//get database info - perturb if desired
 	int num_states = db->getNumStates(); 
 	if (perturb) {
-		double perturb_frac = 0.25;
-		perturbDB(db, perturb_frac, perturb_frac);
+		double freq_perturb_frac = 0.0; //perturb the eq prob data by up to this fraction
+		double rate_perturb_frac = 0.75; //perturb the rate data by up to this fraction
+		perturbDB(db, freq_perturb_frac, rate_perturb_frac);
+		//perturbDBconstP(db);
 	}
 
 	//set up particle identity
@@ -334,7 +340,7 @@ void perform_evolution(int N, bd::Database* db, int initial, int target, bool us
 	else { //uses the function to set identities
 		//int IC = 1; 
 		//numTypes = bd::setTypes(N, particleTypes, IC);
-		numTypes = 3;
+		numTypes = 2;
 	}
 	int numInteractions = numTypes*(numTypes+1)/2;
 
@@ -357,11 +363,13 @@ void perform_evolution(int N, bd::Database* db, int initial, int target, bool us
 	}
 
 	//find all target states consistent with input target
-	std::vector<int> targets; 
+	std::vector<int> targets; //targets.push_back(target);
+	
 	bd::findIsomorphic(N, num_states, target, db, targets);
 	for (int i = 0; i < targets.size(); i++) {
 		std::cout << targets[i] << "\n";
 	}
+	
 
 
 	//construct the initial population

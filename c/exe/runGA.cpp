@@ -26,8 +26,8 @@ int main(int argc, char* argv[]) {
 	int N = db->getN();
 
 	//call the genetic algorithm
-	//ga::perform_evolution(N, db, initial, target, useFile);
-	ga::perform_evolution_sampling(N, useFile);
+	ga::perform_evolution(N, db, initial, target, useFile);
+	//ga::perform_evolution_sampling(N, useFile);
 
 	//free memory 
 	delete db; 

@@ -62,26 +62,26 @@ int main(int argc, char* argv[]) {
 	}
 
 	//construct the subgraph that ends at target
-	bd::Graph* sub = bd::targetSubgraph(g, source, target);
+	//bd::Graph* sub = bd::targetSubgraph(g, source, target);
 	//printGraph(sub, source, draw, clean, reduce);
 
 	//print most probable path ending at target
 	//bd::MPP(sub,source);
 
 	//construct subgraph that starts at some node
-	bd::Graph* sub2 = bd::sourceSubgraph(g, 17);
+	//bd::Graph* sub2 = bd::sourceSubgraph(g, 17);
 	//bd::printGraph(sub2, 17, draw, clean, reduce);
-	bd::endDistribution(sub2);
+	//bd::endDistribution(sub2);
 
 	//check end distr calc
-	bd::findConditionalEnd(g, source);
+	//bd::findConditionalEnd(g, source);
 
 	//get graph with end state probabilities
 	//bd::printGraphEndDistribution(g, source, reduce);
 
 
 	//free memory - delete database
-	delete db; delete g; delete sub; delete sub2;
+	delete db; delete g; //delete sub; delete sub2;
 	delete []Z;
 
 	return 0;

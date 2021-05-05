@@ -1,4 +1,6 @@
 #include "latticeP.h"
+#include <eigen3/unsupported/Eigen/MatrixFunctions>
+#include <eigen3/Eigen/Dense>
 #include <omp.h>
 
 
@@ -246,6 +248,17 @@ void initChain(int N, Particle* chain, particleMap& cMap,
 	delete []types;
 }
 
+void initChain(int N, Particle* chain, particleMap& cMap,
+							 int* types) {
+	//initialize a linear chain, with some type distribution
+
+	//initialize the chain - linear on x axis
+	for (int i = 0; i < N; i++) {
+		chain[i] = Particle(i, 0, types[i]);
+		cMap[std::make_pair(i, 0)] = &(chain[i]); 
+	}
+}
+
 void initChain(int N, int* X, Particle* chain, particleMap& cMap,
 							 bool useFile) {
 	//initialize a chain with coordinates X, with some type distribution
@@ -307,7 +320,18 @@ void printChain(int N, Particle* chain) {
 	std::cout << "\n";
 	for (int i = 0; i < N; i++) {
 		for (int j = 0; j < N; j++) {
-			std::cout << positions[toIndex(j,i,N)] << ' ';
+			int value = positions[toIndex(j,i,N)];
+			if (N < 10) {
+				std::cout << value << ' ';
+			}
+			else {
+				if (value < 10) {
+					std::cout << value << "  ";
+				}
+				else {
+					std::cout << value << ' ';
+				}
+			}
 		}
 		std::cout << "\n";
 	}
@@ -444,6 +468,31 @@ void getBonds(int N, Particle* chain, std::vector<std::pair<int,int>>& bonds) {
 
 }
 
+double getEnergy(int N, Particle* chain, double eps) {
+	//get energy, assuming uniform eps per bond
+
+	std::vector<std::pair<int,int>> bonds;
+	getBonds(N, chain, bonds);
+	double e1 = -eps * bonds.size();
+
+	return e1;
+}
+
+double getEnergy(int N, Particle* chain, double* E) {
+	//get energy for non-uniform bonds strengths
+
+	std::vector<std::pair<int,int>> bonds;
+	getBonds(N, chain, bonds);
+
+	double e = 0;
+	for (int i = 0; i < bonds.size(); i++) {
+		e += - E[toIndex(bonds[i].first, bonds[i].second, N)];
+	}
+
+	return e;
+
+}
+
 
 /******************************************************************************/
 /***************** Monte Carlo Functions **************************************/
@@ -474,15 +523,6 @@ void rejectMove(int particle, int x_old, int y_old, Particle* chain) {
 
 }
 
-double getEnergy(int N, Particle* chain, double eps) {
-	//get energy, assuming uniform eps per bond
-
-	std::vector<std::pair<int,int>> bonds;
-	getBonds(N, chain, bonds);
-	double e1 = -eps * bonds.size();
-
-	return e1;
-}
 
 bool takeStep(int N, Particle* chain, particleMap& cMap,
 							RandomNo* rngee, double eps, double& energy) {
@@ -520,6 +560,63 @@ bool takeStep(int N, Particle* chain, particleMap& cMap,
 
 	//get energy from chain
 	double e1 = getEnergy(N, chain, eps);
+
+	//get acc probability - do accept/reject step
+	double a = std::min(1.0, exp(-(e1-e0)));
+	//printf("e1 = %f, e0 = %f, Acc = %f\n", e1, e0, a);
+	double U = rngee->getU();
+	if (U <= a) {
+		acceptMove(particle, x_old, y_old, chain, cMap);
+		energy = e1;
+		//printf("Move accept %f\n", e1);
+		//printChain(N, chain);
+		return true;
+	}
+	else {
+		rejectMove(particle, x_old, y_old, chain);
+		//printf("Move reject\n");
+		return false;
+	}
+
+
+}
+
+bool takeStep(int N, Particle* chain, particleMap& cMap,
+							RandomNo* rngee, double* E, double& energy) {
+	//perform an MCMC step - return the energy of the returned state
+
+	//std::cout << "hello\n";
+	//set the initial energy
+	double e0 = energy;
+
+	//first we pick a random particle and get its coordinates
+	int particle = randomInteger(N, rngee);
+	int x_old = chain[particle].x; int y_old = chain[particle].y;
+	//printf("Particle %d\n", particle);
+
+	//std::cout << "hello\n";
+
+	//next we generate the set of moves
+	std::vector<std::pair<int,int>> moves;
+	getMoves(N, particle, chain, moves, cMap);
+
+	
+	//std::cout << "hello\n";
+
+	//pick a move to perform, or return if there are no choices
+	int M = moves.size();
+	if (M == 0) {
+		return false;
+	}
+	int move = randomInteger(M, rngee);
+	//printf("Picked move %d of %d\n", move+1, M);
+
+
+	//update the position of particle in chain to whats in move
+	chain[particle].x = moves[move].first; chain[particle].y = moves[move].second; 
+
+	//get energy from chain
+	double e1 = getEnergy(N, chain, E);
 
 	//get acc probability - do accept/reject step
 	double a = std::min(1.0, exp(-(e1-e0)));
@@ -618,19 +715,21 @@ void buildPDB(int N) {
 void getAM(int N, Particle* chain, int* AM) {
 	//determine the non-trivial list of bonds
 
-	for (int i = 0; i < N; i++) {
+	for (int i = 0; i < N-1; i++) {
 		int xi = chain[i].x; int yi = chain[i].y;
+		AM[toIndex(i,i+1,N)] = 1; AM[toIndex(i+1,i,N)] = 1;
 
 		for (int j = i+2; j < N; j++) {
 			int xj = chain[j].x; int yj = chain[j].y;
 
 			//check if particles are distance 1 apart. 1-norm distance
 			int dist = abs(xj-xi) + abs(yj-yi);
+			//printf("Particles %d and %d, dist %d\n", i,j,dist);
 			if (dist == 1) {
-				AM[toIndex(i,j,N)] = 1;
+				AM[toIndex(i,j,N)] = 1; AM[toIndex(j,i,N)] = 1;
 			}
 			else {
-				AM[toIndex(i,j,N)] = 0;
+				AM[toIndex(i,j,N)] = 0; AM[toIndex(j,i,N)] = 0;
 			}
 		}
 	}
@@ -1342,6 +1441,7 @@ double getStickyProductL(int N, int state,  Database* db, int* particleTypes,
 			if ((*db)[state].isInteracting(i,j)) {
 				int p1 = particleTypes[i]; int p2 = particleTypes[j];
 				stickyProd *= kappa.find({p1,p2})->second;
+				//printf("state: %d, i %d, j %d\n",state, i, j);
 			}
 		}
 	}
@@ -1400,7 +1500,10 @@ void createTransitionMatrix(double* T, int num_states, Database* db,
 	//create rate matrix from data in DB - forward rates
 
 	//declare storage for each state
-	double mfpt; int S;
+	double mfpt; double S;
+	double mult = 300;
+
+
 
 	//loop over all states to get max bonds number
 	int maxB = 0;
@@ -1425,7 +1528,7 @@ void createTransitionMatrix(double* T, int num_states, Database* db,
 		//fill in value in transition matrix
 		std::vector<bd::Pair> P = (*db)[state].getP();
 		for (int i = 0; i < P.size(); i++) {
-			T[toIndex(state, P[i].index, num_states)] = (P[i].value / S) / mfpt;
+			T[toIndex(state, P[i].index, num_states)] = mult * (P[i].value / S) / mfpt;
 		}
 	}
 }
@@ -1580,6 +1683,7 @@ void constructScatterTOYL(int N, Database* db, int initial, int target, bool use
 	if (N == 7) {
 		M = 25;
 	}
+	M = 33;
 	double base = 1.0; //smallest kappa to use - 1
 	double mult = 1.6; //multiplies base to get next value - 1.3
 	double* Ks = new double[M]; Ks[0] = base;
@@ -1595,12 +1699,12 @@ void constructScatterTOYL(int N, Database* db, int initial, int target, bool use
 
 	//do hitting probability calculation
 	for (int x = 0; x < M; x++) {
-		for (int y = 0; y < M; y++) {
-			for (int z = 0; z < M; z++) {
+		for (int y = 0; y < 1; y++) {
+			for (int z = 0; z < 1; z++) {
 				//set kappa
-				kappaVals[0] = Ks[x];
-				kappaVals[1] = Ks[y];
-				kappaVals[2] = Ks[z];
+				kappaVals[0] = Ks[0];
+				kappaVals[1] = Ks[x];
+				kappaVals[2] = Ks[0];
 
 				//std::cout << kappaVals[0] << ' ' << kappaVals[1] << ' ' << kappaVals[2] << "\n";
 
@@ -1618,7 +1722,7 @@ void constructScatterTOYL(int N, Database* db, int initial, int target, bool use
 				//fill in diagonal with negative sum of row entries
 				bd::fillDiag(T, num_states);
 				//get the transition rate
-				bd::computeMFPTs(num_states, T, targets, m);
+				bd::computeMFPTsSP(num_states, T, targets, m);
 				double rate = 1/m[initial];
 
 				//update maxima
@@ -1654,6 +1758,160 @@ void constructScatterTOYL(int N, Database* db, int initial, int target, bool use
 	delete []particleTypes; delete []kappaVals; delete []eq;
 	delete []T; delete []Tconst; delete []m; delete []Ks;
 	delete []ek; delete []rk;
+}
+
+void getBondTypesL(int N, int* particleTypes, Database* db, std::vector<int> targets) {
+	//for each state in targets, check how many of each bond type each state has
+	//hard-coded for 2 types
+
+	for (int index = 0; index < targets.size(); index++) {
+		int AA = 0; int AB = 0; int BB = 0;
+		int state = targets[index];
+		for (int i = 0; i < N; i++) {
+			for (int j = i+2; j < N; j++) {
+				if ( (*db)[state].isInteracting(i,j)) {
+			    //printf("%d %d ", i,j);
+					int p1 = particleTypes[i];
+					int p2 = particleTypes[j];
+					if (p1 == 0 && p2 == 0) {
+						AA++;
+					}
+					else if (p1 == 1 && p2 == 1) {
+						BB++;
+					}
+					else {
+						AB++;
+					}
+				}
+			}
+		}
+		//printf("\n");
+		printf("State: %d, AA: %d, AB %d, BB %d\n", state, AA, AB, BB);
+	}
+}
+
+void solveFKE(int N, double* T, int num_states, double tf, Eigen::VectorXd& sol) {
+	//evaluate exponential of the generator
+
+	Eigen::MatrixXd Q; Q.setZero(num_states, num_states);
+	for (int i = 0; i < num_states * num_states; i++) {
+		Q(i) = T[i];
+	}
+	Q = Q * tf;
+
+	Eigen::MatrixXd E; E.setZero(num_states, num_states);
+	E = Q.exp();
+
+	sol = E.row(0);
+}
+
+void evalStatsL(int N, Database* db, int initial, int target, bool useFile) {
+	//evaluate the eq prob, hitting prob, rate, and configurations for the
+	//properties in the input files
+
+	//get database info
+	int num_states = db->getNumStates(); 
+
+	//set up particle identity
+	int* particleTypes = new int[N];
+	int numTypes;
+	if (useFile) { //use the fle to set identities
+		numTypes = bd::readDesignFile(N, particleTypes);
+	}
+	else { //uses the function to set identities
+		int IC = 1; 
+		numTypes = bd::setTypes(N, particleTypes, IC);
+	}
+	int numInteractions = numTypes*(numTypes+1)/2;
+
+	//set up sticky parameter values
+	double* kappaVals = new double[numInteractions];
+	bd::initKappaVals(numInteractions, kappaVals);
+
+	//declare rate matrix, probability transition matrix, equilibrium measure
+	double* T = new double[num_states*num_states]; //rate matrix
+	double* Tconst = new double[num_states*num_states]; //rate matrix - only forward entries
+	double* eq = new double[num_states];           //equilibrium measure
+	double* m = new double[num_states];            //mfpts 
+
+	//init the rate matrix with zeros
+	for (int i = 0; i < num_states*num_states; i++) {
+		Tconst[i] = 0; T[i] = 0;
+	}
+
+	//init eq and m with zeros
+	for (int i = 0; i < num_states; i++) {
+		eq[i] = m[i] = 0;
+	}
+
+	//get bonds->bonds+1 entries from mfpt estimates
+	std::vector<int> ground; //vector to hold all ground states
+	createTransitionMatrix(Tconst, num_states, db, ground);
+	for (int i = 0; i < ground.size(); i++) {
+		std::cout << ground[i] << "\n";
+	}
+
+	//find all target states consistent with input target
+	std::vector<int> targets; targets.push_back(target);
+
+	//the following doesnt work for distinguishing lattice ground states
+	/*
+	findIsomorphic(N, num_states, target, db, targets);
+	for (int i = 0; i < targets.size(); i++) {
+		std::cout << targets[i] << "\n";
+	}
+	*/
+
+	//declare the kappa mapping
+	std::map<std::pair<int,int>,double> kappa;
+
+	//get the permutation
+	//initKappaVals(numInteractions, kappaVals);
+	bd::readKappaFile(numInteractions, kappaVals);
+
+	bd::makeKappaMap(numTypes, kappaVals, kappa);
+	//std::cout << kappa[{0,0}] << ' ' << kappa[{1,0}] << ' ' << kappa[{1,1}] << "\n";
+	//do rewieght
+	reweightL(N, num_states, db, particleTypes, eq, kappa);
+	//copy Tconst into T
+	std::copy(Tconst, Tconst+num_states*num_states, T);
+	//fill in transposed entries such that T satisfies detailed balance
+	satisfyDB(T, num_states, db, eq);
+	//fill in diagonal with negative sum of row entries
+	bd::fillDiag(T, num_states);
+	//get the transition rate
+	bd::computeMFPTsSP(num_states, T, targets, m);
+	double rate = 1.0 / m[initial];
+
+	for (int i = 0; i < 300; i++) {
+		Eigen::VectorXd probs; probs.setZero(num_states);
+		solveFKE(N, T, num_states, (10.0*i)/300.0, probs);
+		std::cout << probs(target) << "\n";
+	}
+	Eigen::VectorXd probs; probs.setZero(num_states);
+	solveFKE(N, T, num_states, 100.0/300.0, probs);
+	printf("Final Time Occupation Probabilities:\n");
+	for (int i = 0; i < num_states; i++) {
+		printf("State: %d, Prob %f, mfpt %f\n", i, probs(i), m[i]);
+	}
+
+	//print results
+	printf("Rate to target: %f\n", rate);
+	printf("Ground State Eq Probabilities:\n");
+	for (int i = 0; i < ground.size(); i++) {
+		printf("State: %d, Eq: %f\n", ground[i], eq[ground[i]]);
+	}
+
+	//print the bond types
+	std::cout << "Bond distributions:\n";
+	getBondTypesL(N, particleTypes, db, ground);
+	std::cout << "\n";
+
+	//free memory
+	delete []particleTypes; delete []Tconst; delete []kappaVals;
+	delete []T; delete []m; delete []eq;
+
+
 }
 
 
@@ -1769,10 +2027,1319 @@ void HPscatter(int N, Database* db, int initial, int target) {
 
 }
 
+/**********************************************************************/
+/***************** Measure testing on a lattice  **********************/
+/**********************************************************************/
+
+void buildAM(int N, Database* db, int target, int* M) {
+	//build adj mat from database
+
+	//zero out the matrix from previous searches
+	for (int i = 0; i < N*N; i++) M[i] = 0;
+
+	//fill the matrix with db data
+	for (int i = 0; i < N; i++) {
+		for (int j = 0; j < N; j++) {
+			M[i*N+j] = (*db)[target].isInteracting(i,j);
+		}
+	}
+
+}
+
+double harmonicMeanBarrier(int N, Database* db, int target, double* E) {
+	//determine harmonic mean of the bond strengths in target state
+
+	double m = 0;
+
+	for (int i = 0; i < N; i++) {
+		for (int j = i+2; j < N; j++) {
+			if ( (*db)[target].isInteracting(i,j)) {
+		    double energy = E[toIndex(i,j,N)];
+		    printf("energy is %f\n", energy);
+		    m += 1.0 / energy;
+			}
+		}
+	}
+
+	return 1.0 / m;
+}
+
+void misfoldVector(int N, Database* db, int target, Eigen::VectorXd& misfold, double* E) {
+	//construct the vector of misfolded energies
+
+	//get number of states
+	int num_states = db->getNumStates();
+
+	//make adjacency matrix of target state and comp state
+	int* M_target = new int[N*N]; for (int i = 0; i < N*N; i++) M_target[i] = 0;
+	int* M = new int[N*N]; for (int i = 0; i < N*N; i++) M[i] = 0;
+	buildAM(N, db, target, M_target);
+
+	//loop over states
+	for (int i = 0; i < num_states; i++) {
+		double badEnergy = 0;
+		buildAM(N, db, i, M);
+		for (int p1 = 0; p1 < N; p1++) {
+			for (int p2 = p1+2; p2 < N; p2++) {
+				int inState = M[bd::toIndex(p1,p2,N)];
+				int inTarget = M_target[bd::toIndex(p1,p2,N)];
+				if (inState == 1 && inTarget == 0) {
+					badEnergy += E[toIndex(p1,p2,N)];
+				}
+			}
+		}
+		misfold(i) = badEnergy;
+	}
+
+	delete []M; delete []M_target;
+
+}
+
+void createRateMatrix(int N, Database* db, int numTypes, double* kappaVals,
+											int* particleTypes, 
+											Eigen::MatrixXd& R, const Eigen::MatrixXd& r_form) {
+	//use the database to construct the rate matrix at the given values
+	//no derivative, so this is just a matrix
+
+	//declare equilibrium measure and perform reweight
+	int num_states = db->getNumStates();
+	double* eq = new double[num_states];           //equilibrium measure
+	std::map<std::pair<int,int>,double> kappa;    //map for interaction type to kappa
+	bd::makeKappaMap(numTypes, kappaVals, kappa);
+	reweightL(N, num_states, db, particleTypes, eq, kappa);
+
+	double mult = 300.0;
+
+	//fill in forward and satisfy detailed balance wrt eq for backward
+	for (int i = 0; i < num_states; i++) {
+		for (int j = 0; j < num_states; j++) {
+			if (r_form(i,j) > 0) {
+				R(i,j) = r_form(i,j);
+				R(j,i) = r_form(i,j) * (eq[i] / eq[j]);
+			}
+		}
+	}
+
+	//finally, must set the diagonal to be negative of the row sum
+	for (int i = 0; i < num_states; i++) {
+		double R_sum = 0; 
+
+		for (int j = 0; j < num_states; j++) {
+			R_sum += R(i,j);
+		}
+
+		R(i,i) = -R_sum; 
+	}
+
+	R *= mult;
+
+
+	delete []eq;
+}
+
+double averageMisfoldEnergyTrap(int N, double Tf, int initial, double* kappaVals, Database* db, 
+														int* particleTypes, int numTypes, double* Tconst,
+														const Eigen::VectorXd& misfold, std::vector<int>& targets) {
+	//get average misfolded energy at first trap time
+
+	int num_states = db->getNumStates();
+
+	//first we need to construct the generator
+	Eigen::MatrixXd R; R.setZero(num_states, num_states);
+	Eigen::MatrixXd r_form; r_form.setZero(num_states, num_states);
+	for (int i = 0; i < num_states*num_states; i++) {
+		r_form(i) = Tconst[i];
+	}
+	createRateMatrix(N, db, numTypes, kappaVals, particleTypes,  R, r_form);
+
+	//next we determine the "trap states" by sorting a list of rates
+	std::vector<std::pair<double,int>> exit_rates;
+	for (int i = 0; i < num_states; i++) {
+		exit_rates.push_back(std::make_pair(fabs(R(i,i)),i));
+	}
+
+	//sort vector
+	std::sort(exit_rates.begin(), exit_rates.end());
+
+	//extract the top m elements and add to trap states
+	int m = 6;
+	std::vector<int> traps;
+	for (int i = 0; i < m; i++) {
+		traps.push_back(exit_rates[i].second);
+	}
+
+	//determine the first hitting probability for the trap states
+	Eigen::MatrixXd U; U.setZero(num_states,num_states);
+	Eigen::MatrixXd P; P.setZero(num_states,num_states);
+	//make rate matrix into probability matrix
+	for (int i = 0; i < num_states; i++) {
+		double Z = -R(i,i);
+		for (int j = 0; j < num_states; j++) {
+			P(i,j) = R(i,j) / Z;
+		}
+		P(i,i) = 0.0;
+	}
+	bd::computeHittingProbability(P, num_states, traps, U);
+	Eigen::VectorXd probs = U.row(initial); 
+
+	for (int i = 0; i < num_states; i++) {
+		printf("State %d, prob %f\n", i, probs(i));
+	}
+	
+	double prod = probs.dot(misfold);
+
+	return prod;
+
+}
+
+void testMeasuresRecord(int N, Database* db, int initial, int target, bool useFile) {
+	//test measures - output eq prob and mfpt, along with test meaasures
+
+	//get database info
+	int num_states = db->getNumStates(); 
+
+	//set up particle identity
+	int* particleTypes = new int[N];
+	int numTypes;
+	if (useFile) { //use the fle to set identities
+		numTypes = bd::readDesignFile(N, particleTypes);
+	}
+	else { //uses the function to set identities
+		int IC = 1; 
+		numTypes = bd::setTypes(N, particleTypes, IC);
+	}
+	int numInteractions = numTypes*(numTypes+1)/2;
+
+	//set up sticky parameter values
+	double* kappaVals = new double[numInteractions];
+	bd::readKappaFile(numInteractions, kappaVals);
+
+	//declare rate matrix, probability transition matrix, equilibrium measure
+	double* T = new double[num_states*num_states]; //rate matrix
+	double* Tconst = new double[num_states*num_states]; //rate matrix - only forward entries
+	double* eq = new double[num_states];           //equilibrium measure
+	double* m = new double[num_states];            //mfpts 
+
+	//init the rate matrix with zeros
+	for (int i = 0; i < num_states*num_states; i++) {
+		Tconst[i] = 0; T[i] = 0;
+	}
+
+	//init eq and m with zeros
+	for (int i = 0; i < num_states; i++) {
+		eq[i] = m[i] = 0;
+	}
+
+	//get bonds->bonds+1 entries from mfpt estimates
+	std::vector<int> ground; //vector to hold all ground states
+	createTransitionMatrix(Tconst, num_states, db, ground);
+	for (int i = 0; i < ground.size(); i++) {
+		std::cout << ground[i] << "\n";
+	}
+
+	//find all target states consistent with input target
+	std::vector<int> targets; targets.push_back(target);
+
+
+	//set interaction matrices
+	int* P = new int[N*N]; 
+	double* E = new double[N*N]; 
+
+	std::map<std::pair<int,int>,double> kappaMap;
+	bd::makeKappaMap(numTypes, kappaVals, kappaMap);
+	bd::fillP(N, particleTypes, P, E, kappaMap);
+
+
+	Eigen::VectorXd misfold;
+	double Tf = 5.0;
+	double M = 110;
+	double mult = 1.08;
+
+	//declare outfile
+	std::ofstream ofile;
+	ofile.open("paretoMap_lattice.txt");
+
+	//loop over kappa values for triangle
+	for (int i = 0; i < M; i++) {
+
+		//setup kappa values
+		for (int i = 0; i < N*N; i++) P[0] = 0; for (int i = 0; i < N*N; i++) E[0] = 0;
+		kappaMap.clear();
+		kappaVals[0] *= mult;
+		bd::makeKappaMap(numTypes, kappaVals, kappaMap);
+		bd::fillP(N, particleTypes, P, E, kappaMap);
+
+		//do rewieght
+		reweightL(N, num_states, db, particleTypes, eq, kappaMap);
+		//get eq prob - conditional on being in a ground state
+		double eqProb = getEqProb(eq, targets);
+		for (int j = 0; j < num_states; j++) {
+			printf("State %d, eq %f\n", j, eq[j]);
+		}
+		//copy Tconst into T
+		std::copy(Tconst, Tconst+num_states*num_states, T);
+		//fill in transposed entries such that T satisfies detailed balance
+		//for (int q = 0; q < num_states; q++) eq[q] = 1.0;
+		//for (int q = 0; q < num_states*num_states; q++) T[q] = 100.0;
+		satisfyDB(T, num_states, db, eq);
+
+		//fill in diagonal with negative sum of row entries
+		bd::fillDiag(T, num_states);
+		//get the transition rate
+		bd::computeMFPTsSP(num_states, T, targets, m);
+		double rate = 1/m[initial];
+
+		//get measure 1
+		/*
+		double c1 = .25;
+		double m1 = 1.0-exp(-c1*smallestBarrier(N, db, target, E));
+		*/
+
+		
+		//double m1 = stayingProb(N, T, initial, kappaVals, db, particleTypes, numTypes, 
+																	// Tconst, targets);
+		
+
+		double m1 = 1.0 - exp(-harmonicMeanBarrier(N, db, target, E));
+
+		//get measure 2
+		
+		misfold.setZero(num_states);
+		misfoldVector(N, db, target, misfold, E);
+		for (int j = 0; j < num_states; j++) {
+			printf("State %d, misfold %f\n", j, misfold(j));
+		}
+		double m2 = averageMisfoldEnergyTrap(N, Tf, initial, kappaVals, db, particleTypes, numTypes, 
+																		 Tconst, misfold, targets);
+		double c2 = 1.0;
+		m2 = exp(-c2*m2);
+		
+
+		/*
+		double m2 = finalTargetProb(N, T, initial, kappaVals, db, particleTypes, numTypes, 
+																	 Tconst, targets);
+		*/
+
+		ofile << eqProb << ' ' << rate << ' ' << m1 << ' ' << m2 << "\n";
+		std::cout  << eqProb << ' ' << rate << ' ' << m1 << ' ' << m2 << "\n";
+
+	}
+
+
+	ofile.close();
+
+
+
+	//free memory
+	delete []P; delete []E; delete []Tconst; delete []T; delete []m; delete []eq;
+	delete []kappaVals; delete []particleTypes;
+}
+
+/**********************************************************************/
+/***************** Genetic Algorithm Stuff  ***************************/
+/**********************************************************************/
+
+Person2::Person2() : ga::Person()  {}
+
+Person2::Person2(int N_, int num_interactions_, int numTypes_, int* t, double* kV) : 
+ga::Person(N_, num_interactions_, numTypes_, t, kV) {}
+
+Person2::Person2(const Person2& old) : ga::Person(old) {}
+
+void Person2::evalStats(int N, Database* db, int initial, std::vector<int> targets, 
+								 double* eq, double* Tconst, double* T, double* m) {
+	//evaluate stats for a given person
+
+	//get the number of states
+	int num_states = db->getNumStates();
+
+	//zero out the arrays before setting
+	for (int i = 0; i < num_states*num_states; i++) {
+		T[i] = 0;
+	}
+	for (int i = 0; i < num_states; i++) {
+		eq[i] = m[i] = 0;
+	}
+
+	//do rewieght
+	reweightL(N, num_states, db, types, eq, kappa);
+	//get eqProb
+	double eqProb = eq[targets[0]];
+	//copy Tconst into T
+	std::copy(Tconst, Tconst+num_states*num_states, T);
+	//fill in transposed entries such that T satisfies detailed balance
+	satisfyDB(T, num_states, db, eq);
+	//fill in diagonal with negative sum of row entries
+	bd::fillDiag(T, num_states);
+	//get the transition rate
+	if (num_states > 300) { //do a sparse solve
+		bd::computeMFPTsSP(num_states, T, targets, m);
+	}
+	else { //do a dense solve
+		bd::computeMFPTs(num_states, T, targets, m);
+	}
+	double rate = 1.0 / m[initial];
+
+	Rate = rate; Eq = eqProb;
+}
+
+Person2 Person2::mate(Person2 partner, bool useFile, RandomNo* rngee) {
+	//create offspring from two parents
+
+	//create new trait array
+	double* kV = new double[num_interactions];
+	int*    t  = new int[N];
+
+	//take each trait w/ 50/50 chance from each parent
+	for (int i = 0; i < num_interactions; i++) {
+		double p = rngee->getU();
+		
+		if (p < 0.45) { //parent 1
+			kV[i] = kappaVals[i];
+		}
+		else if (p > 0.45 && p < 0.9) { //parent 2
+			kV[i] = partner.kappaVals[i];
+		}
+		else { //mutate
+			kV[i] = ga::sampleKappa(N, rngee);
+		}
+
+		//include a chance to make a large parameter even larger
+		if (kV[i] > 80 && kV[i] < 1e4) {
+			double p2 = rngee->getU();
+			if (p2 < 0.45) {
+				kV[i] *= 2;
+			}
+		}
+
+		//try setting a large parameter to a maximum value
+		if (N == 7) {
+			if (kV[i] > 1e2) {
+				kV[i] = 1500;
+			}
+		}
+		else {
+			if (kV[i] > 1e3) {
+				//kV[i] = 1e5;
+			}
+		}
+	}
+
+	if (useFile) {
+		for (int i = 0; i < N; i++) {
+			t[i] = types[i];
+		}
+	}
+	else {
+		//double p = rngee->getU();     //use this to keep the parents whole string
+		for (int i = 0; i < N; i++) {
+			double p = rngee->getU();  //use this to get particles individually
+			
+			if (p < 0.45) { //parent 1
+				t[i] = types[i];
+			}
+			else if (p > 0.45 && p < 0.9) { //parent 2
+				t[i] = partner.types[i];
+			}
+			else { //mutate
+				t[i] = ga::sampleType(N, numTypes, rngee);
+			}
+		}
+	}
+
+	//create the offspring
+	Person2 kid = Person2(N, num_interactions, numTypes, t, kV);
+
+	//free memory
+	delete []kV; delete []t;
+
+	//birth the child
+	return kid;
+}
+
+void printPopulation(std::vector<Person2> population, int pop_size, std::ofstream& ofile ) {
+	//print the current population and stats to file
+	int nt = population[0].num_interactions;
+
+	for (int i = 0; i < pop_size; i++) {
+		ofile << population[i].Eq << ' ' << population[i].Rate << ' ';
+		for (int j = 0; j < nt; j++) {
+			ofile << population[i].kappaVals[j] << ' ';
+		}
+		ofile << "\n";
+	}
+}
+
+void printTypes(std::vector<Person2> population, int pop_size, int N) {
+	//print the final types of each particle
+	for (int i = 0; i < pop_size; i++) {
+		std::cout << "Person " << i << ":";
+		for (int j = 0; j < N; j++) {
+			std::cout << population[i].types[j];
+		}
+		std::cout << ", EQ: " << population[i].Eq;
+		std::cout << ", Rate: " << population[i].Rate;
+
+		//for rate debugging
+		/*
+		std::cout <<" Rate: " << population[i].Rate << " ";
+		std::cout << population[i].kappaVals[0] << ' ';
+		std::cout << population[i].kappaVals[1] << ' ';
+		std::cout << population[i].kappaVals[2] << ' ';
+		*/
+		
+		std::cout << "\n";
+	}
+}
+
+
+void performGAevolution(int N, Database* db, int initial, int target, bool useFile) {
+	//run the genetic algorithm on the colloid database to find the pareto front
+	//for the target state. Uses fixed particle types from file. 
+
+	//get rid of the eigen parallelism
+	Eigen::setNbThreads(0);
+
+	//parameters to the genetic algorithm
+	int generations = 1000;
+	int pop_size    = 2000;
+	double elite_p  = 0.1;
+	double mates_p  = 0.4;
+	bool printAll   = false;         //set true to make movie of output
+
+	//if we have prior estimates of the max rate and eqProb, set here.
+	//otherwise, this will update, adaptively. 
+	double rateMax = 0.1; double eqMax = 0.1;
+
+	//get database info - perturb if desired
+	int num_states = db->getNumStates(); 
+
+	//set up particle identity
+	int* particleTypes = new int[N];
+	int numTypes;
+	if (useFile) { //use the fle to set identities
+		numTypes = bd::readDesignFile(N, particleTypes);
+	}
+	else { //uses the function to set identities
+		//int IC = 1; 
+		//numTypes = bd::setTypes(N, particleTypes, IC);
+		numTypes = 3;
+	}
+	int numInteractions = numTypes*(numTypes+1)/2;
+
+	//set up sticky parameter values
+	double* kappaVals = new double[numInteractions];
+
+	//declare rate matrix - only forward entries
+	double* Tconst = new double[num_states*num_states]; //rate matrix - only forward entries
+
+	//init the rate matrix with zeros
+	for (int i = 0; i < num_states*num_states; i++) {
+		Tconst[i] = 0;
+	}
+
+	//get bonds->bonds+1 entries from mfpt estimates
+	std::vector<int> ground; //vector to hold all ground states
+	createTransitionMatrix(Tconst, num_states, db, ground);
+	for (int i = 0; i < ground.size(); i++) {
+		std::cout << ground[i] << "\n";
+	}
+
+	//find all target states consistent with input target
+	std::vector<int> targets; targets.push_back(target);
+	/*
+	bd::findIsomorphic(N, num_states, target, db, targets);
+	for (int i = 0; i < targets.size(); i++) {
+		std::cout << targets[i] << "\n";
+	}
+	*/
+
+
+	//construct the initial population
+	printf("Generating the initial population\n");
+	Person2* pop_array = new Person2[pop_size];
+	std::vector<Person2> population;
+	#pragma omp parallel 
+	{
+	//declare all arrays we need to do calculations
+	double* T = new double[num_states*num_states]; //rate matrix
+	double* eq = new double[num_states];           //equilibrium measure
+	double* m = new double[num_states];            //mfpts 
+	RandomNo* rngee = new RandomNo();              //random number generator
+
+	//loop over population
+	#pragma omp for
+	for (int i = 0; i < pop_size; i++) {
+		std::cout << i << "\n";
+		//draw parameters from a distribution
+		ga::sampleParameters(N, numInteractions, kappaVals, particleTypes, numTypes, useFile, rngee);
+		
+		//create a person, evaluate their stats
+		Person2 p = Person2(N, numInteractions, numTypes, particleTypes, kappaVals);
+		//need new evalStats
+		p.evalStats(N, db, initial, targets, eq, Tconst, T, m);
+		p.evalFitness(eqMax, rateMax);
+		pop_array[i] = p;
+		//printf("e %f, r %f, f %f\n", pop_array[i].Eq, pop_array[i].Rate, pop_array[i].fitness);
+		printf("Finsihing sample %d on thread %d\n", i, omp_get_thread_num());
+	}
+	//free memory
+	delete []T; delete []eq; delete []m;
+	delete rngee;
+	//end parallel region
+	}
+
+	//move from array to vector
+	for (int i = 0; i < pop_size; i++) {
+		population.push_back(pop_array[i]);
+	}
+	delete []pop_array;
+
+	//declare outfile
+	std::ofstream ofile;
+	ofile.open("paretoGAlattice.txt");
+
+	//print the initial population
+	if (printAll)
+		printPopulation(population, pop_size, ofile);
+
+	//init storage for storing eq and rate
+	double* popEq = new double[pop_size];
+	double* popRate = new double[pop_size];
+	double* popFitness = new double[pop_size];
+
+	//loop over generations
+	for (int gen = 0; gen < generations; gen++) {
+		//get the eq, rate, and fitness of each person
+
+		printf("Spawning generation %d of %d\n", gen+1,generations);
+		for (int i = 0; i < pop_size; i++) {
+			popEq[i] = population[i].Eq; 
+			popRate[i] = population[i].Rate; 
+			popFitness[i] = population[i].fitness;
+
+			//printf("Person %d, eq %f, rate %f\n", i, population[i].Eq, population[i].Rate);
+			//printf("%f, %f, %f\n", population[i].kappaVals[0],population[i].kappaVals[1],population[i].kappaVals[2]);
+		}
+
+		//get the current max eq and rate to update the scalings
+		double eM = *std::max_element(popEq, popEq + pop_size); 
+		double rM = *std::max_element(popRate, popRate + pop_size); 
+		if (eM > eqMax) {
+			eqMax = eM;
+		}
+		if (rM > rateMax) {
+			rateMax = rM;
+		}
+
+		//printf("Gen %d, em %f, rm %f\n", gen, eqMax, rateMax);
+
+		//next, we sort the population by fitness, high to low
+		std::vector<int> p(pop_size);
+		std::iota(p.begin(), p.end(), 0);
+		//std::sort(p.begin(), p.end(), [&](int i1, int i2) { return popFitness[i1] > popFitness[i2]; });
+		
+		double f = population[p[0]].fitness;
+		std::cout << "max f " << f << "\n";
+
+		//determine the non-dominated points
+		std::vector<int> nonDom;
+		ga::non_dominated_set(pop_size, popEq, popRate, nonDom);
+		
+		//create the new generation, perform elitism step
+		std::vector<Person2> new_generation;
+		int elites = nonDom.size(); 
+		printf("Gen %d, num elites %d\n", gen, elites);
+		for (int i = 0; i < elites; i++) {
+			new_generation.push_back(population[nonDom[i]]);
+		}
+
+		//fill rest by mating the top percent of the present generation
+		int rest = pop_size - elites;
+		int top = mates_p * pop_size;
+		Person2* pop_array = new Person2[rest];
+		#pragma omp parallel 
+		{
+		//init the arrays
+		double* T = new double[num_states*num_states]; //rate matrix
+		double* eq = new double[num_states];           //equilibrium measure
+		double* m = new double[num_states];            //mfpts 
+		RandomNo* rngee = new RandomNo(); 
+		//loop over population
+		#pragma omp for
+		for (int i = 0; i < rest; i++) {
+			int r1 = p[floor(rngee->getU()*top)];
+			int r2 = p[floor(rngee->getU()*top)];
+			Person2 p1 = population[r1];
+			Person2 p2 = population[r2];
+			Person2 kid = p1.mate(p2, useFile, rngee);
+			//need new eval stats
+			kid.evalStats(N, db, initial, targets, eq, Tconst, T, m);
+			kid.evalFitness(eqMax, rateMax);
+			pop_array[i] = kid;
+		}
+		//end parallel region / free memory
+		delete []T; delete []eq; delete []m;
+		delete rngee;
+		}
+
+		//move from array to vector
+		for (int i = 0; i < rest; i++) {
+			new_generation.push_back(pop_array[i]);
+		}
+		delete []pop_array;
+
+		//set the population equal to the newly generated one
+		population = new_generation;
+
+		//print if required
+		if (printAll) {
+			printPopulation(population, pop_size, ofile);
+		}
+
+		if (elites == pop_size) {
+			break;
+		}
+
+
+	}
+
+	//output the final results
+	if (!printAll)
+		printPopulation(population, pop_size, ofile);
+
+	ofile.close();
+
+	//print the particle types
+	printTypes(population, pop_size, N);
+
+	//free memory
+	delete []particleTypes; delete []kappaVals; delete []Tconst;
+	delete []popRate; delete []popEq; delete []popFitness;
+
+
+}
+
+
+
+/**********************************************************************/
+/***************** Genetic Algorithm Sampling Stuff  ******************/
+/**********************************************************************/
+
+int yieldSample(int N, int Tf, int ts, double* E, int* M_target, int* types) {
+	//return 1 if ground state forms
+
+	//construct the chain of particles and the lattice mapping
+	Particle* chain = new Particle[N];
+	particleMap cMap;
+
+	//initialize as linear chain
+	initChain(N, chain, cMap, types);
+	double energy0 = 0;
+
+	//make another chain and cMap for reversions
+	Particle* prev_chain = new Particle[N];
+	particleMap prevMap;
+	for (int i = 0;  i < N; i++) {
+		prev_chain[i] = chain[i];
+	}
+	prevMap = cMap;
+
+	//create a random number generator
+	RandomNo* rngee = new RandomNo(); 
+
+	//time per step is constant, set it
+	double dt = 1;
+
+	//set up an adjacency matrix for current and previous state
+	int* M = new int[N*N];
+	int* M_prev = new int[N*N];
+	for (int i = 0; i < N*N; i++) {
+		M[i] = M_prev[i] = 0;
+	}
+	getAM(N, chain, M);
+	getAM(N, chain, M_prev);
+
+	double energy = energy0;         
+	double timer = 0;                //init the timer for the mfpt
+	bool accepted;
+	double misfoldE = 0;
+	bool misfoldFlag = false;
+	double lastEvent = 0;
+
+	//generate samples using MCMC until trapped or Tf steps
+	for (int i = 0; i < Tf; i++) {
+		//get the sample
+		accepted = takeStep(N, chain, cMap, rngee, E, energy);
+	}
+
+	int formed = 0;
+	getAM(N, chain, M);
+	//printAM(N,M);
+	//abort();
+	//printAM(N,M_target);
+	bool same = bd::checkSame(M, M_target, N);
+	if (same) {
+		formed = 1;
+		//printf("hello\n");
+	}
+
+
+	//free memory 
+	delete []chain; delete []prev_chain; delete []M; delete []M_prev;
+	delete rngee;
+
+	return formed;
+}
+
+double rateSampleTrap(int N, int Tf, int ts, double* E, int* M_target, int* types) {
+	//sample a lattice protein trajectory for Tf steps. If stuck in trap for ts steps,
+	//return the misfolded energy
+
+	//construct the chain of particles and the lattice mapping
+	Particle* chain = new Particle[N];
+	particleMap cMap;
+
+	//initialize as linear chain
+	initChain(N, chain, cMap, types);
+	double energy0 = 0;
+
+	//make another chain and cMap for reversions
+	Particle* prev_chain = new Particle[N];
+	particleMap prevMap;
+	for (int i = 0;  i < N; i++) {
+		prev_chain[i] = chain[i];
+	}
+	prevMap = cMap;
+
+	//create a random number generator
+	RandomNo* rngee = new RandomNo(); 
+
+	//time per step is constant, set it
+	double dt = 1;
+
+	//set up an adjacency matrix for current and previous state
+	int* M = new int[N*N];
+	int* M_prev = new int[N*N];
+	for (int i = 0; i < N*N; i++) {
+		M[i] = M_prev[i] = 0;
+	}
+	getAM(N, chain, M);
+	getAM(N, chain, M_prev);
+
+	double energy = energy0;         
+	double timer = 0;                //init the timer for the mfpt
+	bool accepted;
+	double misfoldE = 0;
+	bool misfoldFlag = false;
+	double lastEvent = 0;
+
+	//generate samples using MCMC until trapped or Tf steps
+	for (int i = 0; i < Tf; i++) {
+		//get the sample
+		accepted = takeStep(N, chain, cMap, rngee, E, energy);
+		//printf("Energy is %f\n", energy);
+		//printChain(N,chain);
+		timer += 1;
+
+		//if the position has changed, update timer and check for bond formation
+		if (accepted) {
+			//printf("Hello at time %f\n", timer);
+
+			//get adjacency matrix for current state
+			getAM(N, chain, M);
+			//printAM(N,M);
+
+			//compare to target matrix
+			bool same = bd::checkSame(M, M_prev, N);
+			//if different, log new last event time and new adj matrix
+			if (!same) {
+				lastEvent = timer;
+				//printf("Action at %f\n", timer);
+				//printChain(N,chain);
+				for (int i = 0; i < N*N; i++) M_prev[i] = M[i];
+			}
+
+
+			//update the previous config
+			for (int i = 0;  i < N; i++) {
+				prev_chain[i] = chain[i];
+			}
+			prevMap = cMap;
+		}
+
+		//check for traps
+		if (timer - lastEvent > ts) {
+				//hit a trap, compute misfold energy
+				misfoldE = ga::getMisfoldEnergy(N, M, M_target, E);
+				misfoldFlag = true;
+				//printf("Stuck in state for %f, misfold E = %f\n",timer-lastEvent, misfoldE);
+				//printChain(N, chain);
+				break;
+			}
+
+	}
+
+	if (!misfoldFlag) {
+		misfoldE = ga::getMisfoldEnergy(N, M, M_target, E);
+		misfoldE = -1;
+	}
+
+	//free memory 
+	delete []chain; delete []prev_chain; delete []M; delete []M_prev;
+	delete rngee;
+
+	return misfoldE;
+}
+
+void Person2::evalStatsSampling(double Tf, double ts, int samples, int* M_target) {
+	//evaluate the stats of given member by sampling
+
+	//evaluate the eq first
+	int* P = new int[N*N]; for (int i = 0; i < N*N; i++) P[i] = 0;
+	double* E = new double[N*N]; for (int i = 0; i < N*N; i++) E[i] = 0;
+	bd::fillP(N, types, P, E, kappa);
+	double c1 = 1.0;
+
+	//evaluate the eq probility measure
+	double hBarrier = ga::harmonicBarrier(N, M_target, E);
+	//std::cout << hBarrier << "\n";
+	//std::cout << E[2] << ' ' << E[3] << "\n";
+	Eq = 1.0 - exp(-c1*hBarrier);
+
+	//sample for the rate
+	double rateEst = 0; int trapped = 0;
+	for (int i = 0; i < samples; i++) {
+		//rateEst += rateSampleBarrier(N, Tf, DT, rho, beta, E, P, method, pot, M_target);
+		//rateEst += rateSampleTrap(N, Tf, DT, ts, rho, beta, E, P, method, pot, M_target);
+		/*
+		double result = rateSampleTrap(N, Tf, ts, E, M_target, types);
+		if (result >= 0) {
+			rateEst += result;
+			trapped++;
+		}
+		*/
+
+		rateEst += yieldSample(N, Tf, ts, E, M_target, types);
+		trapped = samples;
+		//std::cout << rateEst << "\n";
+	}
+
+	if (trapped == 0) {
+		rateEst = 0;
+	}
+	else {
+		rateEst /= trapped;
+	}
+	double c2 = 1.0;
+	//Rate = exp(-c2*rateEst);
+	Rate = rateEst;
+
+	delete []E; delete []P;
+
+}
 
 
 
 
+
+
+
+
+
+
+
+
+
+void performGAlattice_sampling(int N, bool useFile) {
+	//run the genetic algorithm on the colloid database to find the pareto front
+	//for the target state. Uses fixed particle types from file. 
+
+	//get rid of the eigen parallelism
+	Eigen::setNbThreads(0);
+
+	//parameters to the genetic algorithm
+	int generations = 30;
+	int pop_size    = 50;
+	double elite_p  = 0.1;
+	double mates_p  = 0.1;
+	bool printAll   = false;         //set true to make movie of output
+
+	//sampling parameters
+	double Tf = 5000.0;           //N=8 Tf = 500
+	double ts = 1500.0;           //N=8 ts = 300
+	int samples = 500;
+	double u_bound = 10000;
+
+	//if we have prior estimates of the max rate and eqProb, set here.
+	//otherwise, this will update, adaptively. 
+	double rateMax = 1.0; double eqMax = 1.0;
+
+	//set up particle identity
+	int* particleTypes = new int[N];
+	int numTypes;
+	if (useFile) { //use the fle to set identities
+		numTypes = bd::readDesignFile(N, particleTypes);
+	}
+	else { //uses the function to set identities
+		//int IC = 1; 
+		//numTypes = bd::setTypes(N, particleTypes, IC);
+		numTypes = 8;
+	}
+	int numInteractions = numTypes*(numTypes+1)/2;
+
+	//set up sticky parameter values
+	double* kappaVals = new double[numInteractions];
+
+	//set up target
+	int* M_target = new int[N*N]; for (int i = 0; i < N*N; i++) M_target[i] = 0;
+	double* X_target = new double[N*DIMENSION];
+	for (int i = 0; i < N*DIMENSION; i++) X_target[i] = 0;
+	ga::readTargetFile(M_target, X_target);
+	//printAM(N,M_target);
+	//abort();
+	
+	
+
+
+	//construct the initial population
+	printf("Generating the initial population\n");
+	Person2* pop_array = new Person2[pop_size];
+	std::vector<Person2> population;
+	#pragma omp parallel 
+	{
+	//declare all arrays we need to do calculations
+	RandomNo* rngee = new RandomNo();              //random number generator
+
+	//loop over population
+	#pragma omp for schedule(dynamic)
+	for (int i = 0; i < pop_size; i++) {
+		//draw parameters from a distribution
+		ga::sampleParameters(N, numInteractions, kappaVals, particleTypes, numTypes, useFile, rngee);
+		
+		//create a person, evaluate their stats
+		Person2 p = Person2(N, numInteractions, numTypes, particleTypes, kappaVals);
+		p.applyBound(0.1, u_bound);
+		p.evalStatsSampling(Tf, ts, samples, M_target);
+		p.evalFitness(eqMax, rateMax);
+		pop_array[i] = p;
+		//printf("e %f, r %f, f %f\n", pop_array[i].Eq, pop_array[i].Rate, pop_array[i].fitness);
+		printf("Finsihing sample %d on thread %d\n", i, omp_get_thread_num());
+	}
+	//free memory
+	delete rngee;
+	//end parallel region
+	}
+
+	//move from array to vector
+	for (int i = 0; i < pop_size; i++) {
+		population.push_back(pop_array[i]);
+	}
+	delete []pop_array;
+
+	//declare outfile
+	std::ofstream ofile;
+	ofile.open("paretoGAlattice_sampling.txt");
+
+	//print the initial population
+	if (printAll)
+		printPopulation(population, pop_size, ofile);
+
+	//init storage for storing eq and rate
+	double* popEq = new double[pop_size];
+	double* popRate = new double[pop_size];
+	double* popFitness = new double[pop_size];
+
+	//loop over generations
+	for (int gen = 0; gen < generations; gen++) {
+		//get the eq, rate, and fitness of each person
+
+		printf("Spawning generation %d of %d\n", gen+1,generations);
+		for (int i = 0; i < pop_size; i++) {
+			popEq[i] = population[i].Eq; 
+			popRate[i] = population[i].Rate; 
+			popFitness[i] = population[i].fitness;
+
+			//printf("Person %d, eq %f, rate %f\n", i, population[i].Eq, population[i].Rate);
+			//printf("%f, %f, %f\n", population[i].kappaVals[0],population[i].kappaVals[1],population[i].kappaVals[2]);
+		}
+
+		//get the current max eq and rate to update the scalings
+		double eM = *std::max_element(popEq, popEq + pop_size); 
+		double rM = *std::max_element(popRate, popRate + pop_size); 
+		if (eM > eqMax) {
+			eqMax = eM;
+		}
+		if (rM > rateMax) {
+			rateMax = rM;
+		}
+
+		//printf("Gen %d, em %f, rm %f\n", gen, eqMax, rateMax);
+
+		//next, we sort the population by fitness, high to low
+		std::vector<int> p(pop_size);
+		std::iota(p.begin(), p.end(), 0);
+		//std::sort(p.begin(), p.end(), [&](int i1, int i2) { return popFitness[i1] > popFitness[i2]; });
+		
+		double f = population[p[0]].fitness;
+		std::cout << "max f " << f << "\n";
+
+		//determine the non-dominated points
+		std::vector<int> nonDom;
+		ga::non_dominated_set(pop_size, popEq, popRate, nonDom);
+		
+		//create the new generation, perform elitism step
+		std::vector<Person2> new_generation;
+		int elites = nonDom.size(); 
+		printf("Gen %d, num elites %d\n", gen, elites);
+		for (int i = 0; i < elites; i++) {
+			new_generation.push_back(population[nonDom[i]]);
+		}
+
+		//fill rest by mating the top percent of the present generation
+		int rest = pop_size - elites;
+		int top = mates_p * pop_size;
+		Person2* pop_array = new Person2[rest];
+		#pragma omp parallel 
+		{
+		//init the arrays
+		RandomNo* rngee = new RandomNo(); 
+		//loop over population
+		#pragma omp for schedule(dynamic)
+		for (int i = 0; i < rest; i++) {
+			int r1 = p[floor(rngee->getU()*top)];
+			int r2 = p[floor(rngee->getU()*top)];
+			Person2 p1 = population[r1];
+			Person2 p2 = population[r2];
+			Person2 kid = p1.mate(p2, useFile, rngee);
+			kid.applyBound(0.1, u_bound);
+			kid.evalStatsSampling(Tf, ts, samples, M_target);
+			kid.evalFitness(eqMax, rateMax);
+			pop_array[i] = kid;
+		}
+		//end parallel region / free memory
+		delete rngee;
+		}
+
+		//move from array to vector
+		for (int i = 0; i < rest; i++) {
+			new_generation.push_back(pop_array[i]);
+		}
+		delete []pop_array;
+
+		//set the population equal to the newly generated one
+		population = new_generation;
+
+		//print if required
+		if (printAll) {
+			printPopulation(population, pop_size, ofile);
+		}
+
+
+	}
+
+	//output the final results
+	if (!printAll)
+		printPopulation(population, pop_size, ofile);
+
+	ofile.close();
+
+	//print the particle types
+	printTypes(population, pop_size, N);
+
+	//free memory
+	delete []particleTypes; delete []kappaVals; delete []M_target; delete []X_target;
+	delete []popRate; delete []popEq; delete []popFitness;
+}
+
+
+void testSampling(int N) {
+	//test using the MCMC sampler for a given setup
+
+	int* particleTypes = new int[N];
+	int numTypes = bd::readDesignFile(N, particleTypes);
+	int numInteractions = numTypes*(numTypes+1)/2;
+
+	//set up sticky parameter values
+	double* kappaVals = new double[numInteractions];
+	for (int i = 0; i < numInteractions; i++) kappaVals[i] = 0;
+	bd::readKappaFile(numInteractions, kappaVals);
+	std::map<std::pair<int,int>,double> kappa;
+	bd::makeKappaMap(numTypes, kappaVals, kappa);
+
+	int* P = new int[N*N]; for (int i = 0; i < N*N; i++) P[i] = 0;
+	double* E = new double[N*N]; for (int i = 0; i < N*N; i++) E[i] = 0;
+	bd::fillP(N, particleTypes, P, E, kappa);
+
+
+	//construct the chain of particles and the lattice mapping
+	Particle* chain = new Particle[N];
+	particleMap cMap;
+
+	//initialize as linear chain
+	initChain(N, chain, cMap, particleTypes);
+	double energy0 = 0;
+
+	//make another chain and cMap for reversions
+	Particle* prev_chain = new Particle[N];
+	particleMap prevMap;
+	for (int i = 0;  i < N; i++) {
+		prev_chain[i] = chain[i];
+	}
+	prevMap = cMap;
+
+	//create a random number generator
+	RandomNo* rngee = new RandomNo(); 
+
+	//time per step is constant, set it
+	double dt = 1;
+
+	//set up an adjacency matrix for current and previous state
+	int* M = new int[N*N];
+	int* M_prev = new int[N*N];
+	for (int i = 0; i < N*N; i++) {
+		M[i] = M_prev[i] = 0;
+	}
+	getAM(N, chain, M);
+	getAM(N, chain, M_prev);
+
+	double energy = energy0;         
+	double timer = 0;                //init the timer for the mfpt
+	bool accepted;
+	double lastEvent = 0;
+	int Tf = 50000;
+
+	//generate samples using MCMC until trapped or Tf steps
+	for (int i = 0; i < Tf; i++) {
+		//get the sample
+		accepted = takeStep(N, chain, cMap, rngee, E, energy);
+		//printf("Energy is %f\n", energy);
+		//printChain(N,chain);
+		timer += dt;
+
+		//if the position has changed, update timer and check for bond formation
+		if (accepted) {
+			//printf("Hello at time %f\n", timer);
+
+			//get adjacency matrix for current state
+			getAM(N, chain, M);
+			//printAM(N,M);
+
+			//compare to target matrix
+			bool same = bd::checkSame(M, M_prev, N);
+			//if different, log new last event time and new adj matrix
+			if (!same) {
+				lastEvent = timer;
+				printf("Action at %f\n", timer);
+				printChain(N,chain);
+				for (int i = 0; i < N*N; i++) M_prev[i] = M[i];
+			}
+
+
+			//update the previous config
+			for (int i = 0;  i < N; i++) {
+				prev_chain[i] = chain[i];
+			}
+			prevMap = cMap;
+		}
+
+
+	}
+
+
+	//free memory 
+	delete []chain; delete []prev_chain; delete []M; delete []M_prev;
+	delete rngee;
+	delete []particleTypes; delete []kappaVals; delete []P; delete []E;
+}
+
+void testYield(int N) {
+	//test yields generated by Pareto parameters by sampling
+
+	int samples = 5000;
+
+	int* particleTypes = new int[N];
+	int numTypes = bd::readDesignFile(N, particleTypes);
+	int numInteractions = numTypes*(numTypes+1)/2;
+
+	//set up sticky parameter values
+	double* kappaVals = new double[numInteractions];
+	for (int i = 0; i < numInteractions; i++) kappaVals[i] = 0;
+	bd::readKappaFile(numInteractions, kappaVals);
+	std::map<std::pair<int,int>,double> kappa;
+	bd::makeKappaMap(numTypes, kappaVals, kappa);
+
+	int* P = new int[N*N]; for (int i = 0; i < N*N; i++) P[i] = 0;
+	double* E = new double[N*N]; for (int i = 0; i < N*N; i++) E[i] = 0;
+	bd::fillP(N, particleTypes, P, E, kappa);
+
+	//set up target
+	int* M_target = new int[N*N]; for (int i = 0; i < N*N; i++) M_target[i] = 0;
+	double* X_target = new double[N*DIMENSION];
+	for (int i = 0; i < N*DIMENSION; i++) X_target[i] = 0;
+	ga::readTargetFile(M_target, X_target);
+	//printAM(N,M_target);
+	//abort();
+
+	int folded = 0;
+	#pragma omp parallel for reduction(+: folded)
+	for (int sample = 0; sample < samples; sample++) {
+
+		//construct the chain of particles and the lattice mapping
+		Particle* chain = new Particle[N];
+		particleMap cMap;
+
+		//initialize as linear chain
+		initChain(N, chain, cMap, particleTypes);
+		double energy0 = 0;
+
+		//create a random number generator
+		RandomNo* rngee = new RandomNo(); 
+
+		//time per step is constant, set it
+		double dt = 1;
+
+		//set up an adjacency matrix for current and previous state
+		int* M = new int[N*N];
+		for (int i = 0; i < N*N; i++) {
+			M[i] = 0;
+		}
+
+		double energy = energy0;         
+		double timer = 0;                //init the timer for the mfpt
+		bool accepted;
+		double lastEvent = 0;
+		int Tf = 50000;
+
+		//generate samples using MCMC until Tf steps
+		for (int i = 0; i < Tf; i++) {
+			//get the sample
+			accepted = takeStep(N, chain, cMap, rngee, E, energy);
+		}
+
+		getAM(N, chain, M);
+
+		//check if in target
+		bool same = bd::checkSame(M, M_target, N);
+		if (same) {
+			folded++;
+			//printf("hello\n");
+		}
+
+		//free memory
+		delete []chain;  delete []M; 
+		delete rngee;
+		//end parallel region
+	}
+
+	double yield = float(folded) / float(samples);
+	printf("Yield is %f\n", yield);
+
+
+	//free memory 
+	delete []M_target; delete []X_target;
+	delete []particleTypes; delete []kappaVals; delete []P; delete []E;
+}
 
 
 

@@ -12,7 +12,7 @@ void stickyF(double E, double rho, double beta, double k0, double& f, double& fp
 
 double stickyNewton(double E, double rho, double k0, double beta) {
 	//newton method to solve for E
-	int cutoff = 2000; double tol = 1e-6; double x0 = E; double x1;
+	int cutoff = 2000; double tol = 1e-10; double x0 = E; double x1;
 	double f = 0; double fprime = 0;
 	for (int step = 0; step < cutoff; step++) {
 		stickyF(x0, rho, beta, k0, f, fprime);

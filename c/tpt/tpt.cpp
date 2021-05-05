@@ -4,9 +4,6 @@
 #include <fstream>
 #include <string.h>
 #include <vector>
-#include <eigen3/Eigen/Dense>
-#include <eigen3/Eigen/SparseLU>
-//#include <eigen3/Eigen/QR>
 #include "point.h"
 #include "database.h"
 #include "bDynamics.h"
@@ -87,6 +84,8 @@ void computeMFPTsSP(int num_states, double* T, std::vector<int> targets, double*
 		//do the sparse solve
 		tau = solver.solve(b);
 
+		//std::cout << (QMs * tau - b).norm() << "\n";
+
 		//store solution in m - re-add lost zeros
 		int lostIndex = 0;
 		for (int i = 0; i < num_states; i++) {
@@ -144,7 +143,9 @@ void computeMFPTs(int num_states, double* T, std::vector<int> targets, double* m
 		}
 	}
 
-	//std::cout << QM << "\n";
+
+	//std::cout << QM.row(543)<< "\n";
+	//abort();
 
 	//fill b with -1
 	b.fill(-1.0);
@@ -153,6 +154,7 @@ void computeMFPTs(int num_states, double* T, std::vector<int> targets, double* m
 	tau = QM.lu().solve(b);
 
 	//std::cout << tau << "\n";
+	//std::cout << (QM * tau - b).norm() << "\n";
 
 	//store solution in m - re-add lost zeros
 	int lostIndex = 0;
@@ -282,6 +284,37 @@ void computeHittingProbability(double* P, int num_states, std::vector<int> endSt
 	}
 }
 
+void computeHittingProbability(Eigen::MatrixXd& P, int num_states, std::vector<int> endStates, 
+															 Eigen::MatrixXd& U) {
+	//compute the hitting probabilities for the states in endStates
+
+	//init and fill all the required matrices
+	Eigen::MatrixXd R(num_states,num_states); Eigen::MatrixXd Q(num_states,num_states); 
+	Eigen::MatrixXd Pm(num_states,num_states); Eigen::MatrixXd Um(num_states,num_states); 
+	for (int i = 0; i < num_states*num_states; i++) {
+		R(i) = 0; Um(i) = 0; 
+		Q(i) = P(i); Pm(i) = P(i);
+	}
+
+
+	//let R be matrix with only columns corresponding to end states, diagonal = 1
+	//let Q be matrix with rows/cols corresponding to end state zero'd out
+	for (int i = 0; i < endStates.size(); i++) {
+		int state = endStates[i];
+		R.col(state) = Pm.col(state); R(state,state) = 1;
+		Q.row(state) = Um.row(state); Q.col(state) = Um.col(state); 
+	}
+
+	//solve for Um via (I-Q)Um = R
+	Eigen::MatrixXd D = Eigen::MatrixXd::Identity(num_states,num_states) - Q;
+	Um = D.lu().solve(R);
+
+	//store back in U array
+	for (int i = 0; i < num_states*num_states; i++) {
+		U(i) = Um(i);
+	}
+}
+
 
 void fillDiag(double* T, int num_states) {
 	//fill in diagonal elements with negative sum of entries
@@ -384,7 +417,7 @@ void createTransitionMatrix(double* T, int num_states, Database* db,
 	//create rate matrix from data in DB - forward rates
 
 	//declare storage for each state
-	double mfpt; int S;
+	double mfpt; double S;
 
 	//loop over all states information
 	for (int state = 0; state < num_states; state++) {

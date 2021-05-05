@@ -52,7 +52,7 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
 //declare variables
     mxArray *particles_m, *rho_m, *E_m, *N_m, *P_m, *g_m;
     double *particles, *rho, *E, *P, *g;
-    const double rep = 3;
+    const double rep = 200;
     int N;
     int i,j;
 

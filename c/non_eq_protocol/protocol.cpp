@@ -252,8 +252,9 @@ void createRateMatrix(Eigen::MatrixXd& R, int num_states, double beta,
 											const Eigen::MatrixXd& h) {
 	//create rate matrix for model system markov chain
 
-	double rho = 0.5;
-	double kappa = 1.0 / sqrt(2*rho*rho*beta*6) * exp(beta*6);
+	double rho = 1.0 / sqrt(2.0);
+	double E = 6;
+	double kappa = 1.0 / sqrt(2*rho*rho*beta*E) * exp(beta*E);
 
 	//fill in transitions from barrier heights
 	for (int i = 0; i < num_states; i++) {
@@ -265,7 +266,7 @@ void createRateMatrix(Eigen::MatrixXd& R, int num_states, double beta,
 				else if (WHICH == 1) {
 					if (i > j) {
 
-						R(i,j) = h(i,j) / beta * (1.0 / kappa) * sinh(sqrt(beta));
+						R(i,j) = h(i,j) / beta * (1.0 / kappa) * sinh(sqrt(beta*E));
 					}
 					else {
 						R(i,j) = h(i,j) / beta * exp(-1.0/(beta*beta*beta*beta));
@@ -300,8 +301,9 @@ void createRateMatrix(Eigen::MatrixXd& R, Eigen::MatrixXd& D, int num_states, do
 
 	//fill in transitions from barrier heights
 
-	double rho = 0.5;
-	double kappa = 1.0 / sqrt(2*rho*rho*beta*6) * exp(beta*6);
+	double rho = 1.0 / sqrt(2.0);
+	double E = 6;
+	double kappa = 1.0 / sqrt(2*rho*rho*beta*E) * exp(beta*E);
 
 	for (int i = 0; i < num_states; i++) {
 		for (int j = 0; j < num_states; j++) {
@@ -312,8 +314,8 @@ void createRateMatrix(Eigen::MatrixXd& R, Eigen::MatrixXd& D, int num_states, do
 				}
 				else if (WHICH == 1) {
 					if (i > j) {
-						R(i,j) = h(i,j) / beta * (1.0 / kappa) * sinh(sqrt(beta));
-						D(i,j) = - h(i,j) * (1.0/(beta*beta)) * (1.0/kappa) * (beta*6+0.5-0.5*sqrt(beta)*cosh(sqrt(beta))) ;
+						R(i,j) = h(i,j) / beta * (1.0 / kappa) * sinh(sqrt(beta*E));
+						D(i,j) = - h(i,j) * (1.0/(beta*beta)) * (1.0/kappa) * (beta*E+0.5-0.5*sqrt(beta)*cosh(sqrt(beta))) ;
 					}
 					else {
 						R(i,j) = h(i,j) / beta * exp(-1.0/(beta*beta*beta*beta));
